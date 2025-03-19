@@ -1,0 +1,91 @@
+import torch
+from torch.utils.data import Dataset
+from transformers import AutoTokenizer
+from datasets import load_dataset
+
+
+class TextDataset(Dataset):
+    def __init__(self, dataset: Dataset, tokenizer: AutoTokenizer, max_length=512, text_column="text"):
+        """
+        Dataset class for text data.
+
+        Args:
+            dataset (Dataset): The dataset to process.
+            tokenizer (AutoTokenizer): The tokenizer to use for encoding text.
+            max_length (int): The maximum length of the input text.
+            text_column (str): The column name of the text data.
+        """
+        self.dataset = dataset
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.text_column = text_column
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx):
+        item = self.dataset[idx]
+        text = item[self.text_column]  # Get text from the specified column
+
+        # Tokenize text
+        encodings = self.tokenizer(
+            text,
+            truncation=True,
+            max_length=self.max_length,
+            padding="max_length",
+            return_tensors="pt"
+        )
+
+        # For causal LM, labels are the same as input_ids
+        encodings["labels"] = encodings["input_ids"].clone()
+
+        # Convert to correct shape (squeeze out batch dimension)
+        for key in encodings:
+            encodings[key] = encodings[key].squeeze(0)
+
+        return encodings
+
+
+def load_and_process_dataset(
+    dataset_name: str,
+    dataset_config: str,
+    tokenizer: AutoTokenizer,
+    max_length: int = 512,
+    text_column: str = "text"
+):
+    """
+    Load and process dataset for training.
+
+    Args:
+        dataset_name (str): The name of the dataset.
+        dataset_config (str): The configuration of the dataset.
+        tokenizer (AutoTokenizer): The tokenizer to use for encoding text.
+        max_length (int): The maximum length of the input text.
+        text_column (str): The column name of the text data.
+
+    Returns:
+        TextDataset: The training dataset.
+        TextDataset: The evaluation dataset.
+    """
+    if dataset_config:
+        raw_dataset = load_dataset(
+            dataset_name,
+            dataset_config
+        )
+    else:
+        raw_dataset = load_dataset(dataset_name)
+
+    train_dataset = TextDataset(
+        raw_dataset["train"],
+        tokenizer,
+        max_length,
+        text_column
+    )
+    eval_dataset = TextDataset(
+        raw_dataset["validation"],
+        tokenizer,
+        max_length,
+        text_column
+    )
+
+    return train_dataset, eval_dataset
