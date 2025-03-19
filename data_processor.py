@@ -1,4 +1,3 @@
-import torch
 from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 from datasets import load_dataset

@@ -52,11 +52,16 @@ def generate_text(model_path: str, prompt: str, max_length: int = 50) -> str:
 
 
 if __name__ == "__main__":
-    # Check if exist, otherwise use pretrained model
+    # Check if checkpoints directory exists
     if os.path.exists(OUTPUT_DIR):
-        model_path = OUTPUT_DIR
+        # Get last checkpoint
+        model_path = max(
+            [os.path.join(OUTPUT_DIR, d) for d in os.listdir(OUTPUT_DIR)],
+            key=os.path.getmtime,
+        )
         print(f"- Using fine-tuned model from {model_path}")
     else:
+        # Use pre-trained model
         model_path = MODEL_CHECKPOINT
         print(f"- No fine-tuned model found.")
         print(f"- Using pre-trained model from {model_path}")

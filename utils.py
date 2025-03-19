@@ -1,7 +1,6 @@
 import os
 import torch
-from transformers import get_scheduler
-from transformers.optimization import LayerWiseDummyScheduler
+from transformers import get_scheduler, AutoTokenizer
 
 
 def compute_perplexity(model: torch.nn.Module, eval_dataloader: torch.utils.data.DataLoader, device: str) -> float:
@@ -41,13 +40,13 @@ def compute_perplexity(model: torch.nn.Module, eval_dataloader: torch.utils.data
     return perplexity
 
 
-def save_model_checkpoint(model: torch.nn.Module, tokenizer: LayerWiseDummyScheduler, output_dir: str, step: int = None):
+def save_model_checkpoint(model: torch.nn.Module, tokenizer: AutoTokenizer, output_dir: str, step: int = None):
     """
     Save model and tokenizer to the output directory.
 
     Args:
         model (torch.nn.Module): The model to save.
-        tokenizer (LayerWiseDummyScheduler): The tokenizer to save.
+        tokenizer (AutoTokenizer): The tokenizer to save.
         output_dir (str): The output directory.
         step (int): The training step number.
     """
@@ -70,7 +69,7 @@ def get_optimizer_and_scheduler(
     weight_decay: float,
     num_training_steps: int,
     warmup_steps: int,
-) -> tuple[torch.optim.Optimizer, LayerWiseDummyScheduler]:
+) -> tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler]:
     """
     Prepare optimizer and learning rate scheduler.
 
@@ -82,7 +81,7 @@ def get_optimizer_and_scheduler(
         warmup_steps (int): The number of warmup steps.
 
     Returns:
-        tuple[torch.optim.Optimizer, transformers.get_scheduler]: The optimizer and scheduler.
+        tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler]: The optimizer and scheduler.
     """
     # Prepare optimizer
     no_decay = ["bias", "LayerNorm.weight"]

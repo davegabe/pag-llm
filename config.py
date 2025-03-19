@@ -9,7 +9,7 @@ MAX_SEQ_LENGTH = 512
 
 # Model configuration
 MODEL_CHECKPOINT = "HuggingFaceTB/SmolLM2-135M"  # Pre-trained model
-OUTPUT_DIR = "checkpoints/finetuned-smollm2"
+OUTPUT_DIR = "./checkpoints/finetuned-smollm2"
 
 # Dataset configuration
 DATASET_NAME = "wikitext"
