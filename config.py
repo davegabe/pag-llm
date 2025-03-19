@@ -1,7 +1,7 @@
 # Training hyperparameters
 LEARNING_RATE = 5e-5
 BATCH_SIZE = 4
-GRADIENT_ACCUMULATION_STEPS = 4  # To simulate large batch size
+GRADIENT_ACCUMULATION_STEPS = 1  # TODO: Check if this works correctly when > 1
 NUM_EPOCHS = 3
 WARMUP_STEPS = 100
 WEIGHT_DECAY = 0.01
