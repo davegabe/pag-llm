@@ -2,7 +2,9 @@ import os
 import pathlib
 
 import torch
-from transformers import get_scheduler, AutoTokenizer
+from transformers import get_scheduler, PreTrainedTokenizerFast
+
+from config import TrainingConfig
 
 
 def compute_perplexity(model: torch.nn.Module, eval_dataloader: torch.utils.data.DataLoader, device: str) -> float:
@@ -42,14 +44,14 @@ def compute_perplexity(model: torch.nn.Module, eval_dataloader: torch.utils.data
     return perplexity
 
 
-def save_model_checkpoint(model: torch.nn.Module, tokenizer: AutoTokenizer, output_dir: str, step: int = None):
+def save_model_checkpoint(model: torch.nn.Module, tokenizer: PreTrainedTokenizerFast, output_dir: pathlib.Path, step: int = None):
     """
     Save model and tokenizer to the output directory.
 
     Args:
         model (torch.nn.Module): The model to save.
-        tokenizer (AutoTokenizer): The tokenizer to save.
-        output_dir (str): The output directory.
+        tokenizer (PreTrainedTokenizerFast): The tokenizer to save.
+        output_dir (pathlib.Path): The output directory.
         step (int): The training step number.
     """
     # Create output directory
@@ -75,10 +77,8 @@ def get_optimizer_and_scheduler(
 
     Args:
         model (torch.nn.Module): The model to train.
-        learning_rate (float): The learning rate.
-        weight_decay (float): The weight decay.
-        num_training_steps (int): The total number of training steps.
-        warmup_steps (int): The number of warmup steps.
+        training_config (TrainingConfig): The training configuration.
+        num_training_steps (int): The number of training steps, not the epochs.
 
     Returns:
         tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler]: The optimizer and scheduler.

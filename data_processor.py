@@ -1,14 +1,19 @@
 from datasets import load_dataset
+from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizerFast
+
+from .config import DatasetConfig
 
 
 class TextDataset(Dataset):
-    def __init__(self, dataset: Dataset, tokenizer: AutoTokenizer, max_length=512, text_column="text"):
+    def __init__(self, dataset: Dataset, tokenizer: PreTrainedTokenizerFast, max_length: int = 512,
+                 text_column: str = "text"):
         """
         Dataset class for text data.
 
         Args:
             dataset (Dataset): The dataset to process.
-            tokenizer (AutoTokenizer): The tokenizer to use for encoding text.
+            tokenizer (PreTrainedTokenizerFast): The tokenizer to use for encoding text.
             max_length (int): The maximum length of the input text.
             text_column (str): The column name of the text data.
         """
@@ -18,6 +23,7 @@ class TextDataset(Dataset):
         self.text_column = text_column
 
     def __len__(self):
+        # noinspection PyTypeChecker
         return len(self.dataset)
 
     def __getitem__(self, idx):
@@ -44,19 +50,17 @@ class TextDataset(Dataset):
 
 
 def load_and_process_dataset(
-    dataset_name: str,
-    dataset_config: str,
-    tokenizer: AutoTokenizer,
-    max_length: int = 512,
-    text_column: str = "text"
+        dataset_config: DatasetConfig,
+        tokenizer: PreTrainedTokenizerFast,
+        max_length: int = 512,
+        text_column: str = "text"
 ):
     """
     Load and process dataset for training.
 
     Args:
-        dataset_name (str): The name of the dataset.
-        dataset_config (str): The configuration of the dataset.
-        tokenizer (AutoTokenizer): The tokenizer to use for encoding text.
+        dataset_config (DatasetConfig): The dataset configuration
+        tokenizer (PreTrainedTokenizerFast): The tokenizer to use for encoding text.
         max_length (int): The maximum length of the input text.
         text_column (str): The column name of the text data.
 

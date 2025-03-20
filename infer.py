@@ -25,10 +25,8 @@ def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_lengt
         model_name = model_path_or_name
 
     # Load model and tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(model_path)
-    model: AutoModelForCausalLM = AutoModelForCausalLM.from_pretrained(
-        model_path
-    )
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(model_name)
+    model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(model_name)
 
     # Set pad token if it's not set
     if tokenizer.pad_token is None:

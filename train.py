@@ -2,7 +2,7 @@ import logging
 
 import hydra
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerFast, PreTrainedModel
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
@@ -26,14 +26,14 @@ def main(cfg: Config):
     logger.info(f"Process rank: {accelerator.process_index}, device: {device}")
 
     # Load tokenizer and model
-    logger.info(f"Loading model from {args.model_checkpoint}")
-    tokenizer = AutoTokenizer.from_pretrained(args.model_checkpoint)
+    logger.info(f"Loading model from {cfg.model.pretrained_base}")
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(cfg.model.pretrained_base)
 
     # Check if tokenizer has padding token, if not set it
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_checkpoint)
+    model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(cfg.model.pretrained_base)
 
     # Load and process dataset
     logger.info(f"Loading dataset: {cfg.dataset.name}")
