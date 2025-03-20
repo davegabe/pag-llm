@@ -2,7 +2,7 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerFast
 
-from .config import DatasetConfig
+from config import DatasetConfig
 
 
 class TextDataset(Dataset):

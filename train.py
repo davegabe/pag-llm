@@ -6,9 +6,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
-from .config import Config
-from .data_processor import load_and_process_dataset
-from .utils import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
+from config import Config
+from data_processor import load_and_process_dataset
+from utils import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
