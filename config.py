@@ -6,7 +6,7 @@ from typing import Callable
 import hydra
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
-from omegaconf import OmegaConf, DictConfig
+from omegaconf import OmegaConf, DictConfig, ListConfig
 
 import pathlib
 from dataclasses import dataclass
@@ -43,7 +43,10 @@ class DatasetConfig:
     eval_split: str
     prefix: DatasetPrefixConfig
     num_workers: int
+
     config: str | None = None
+    files_to_download: list[str] | None = None
+    data_files: dict[list[str] | str] | None = None
 
 
 @dataclass
@@ -95,13 +98,32 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[Config], None
             config = instantiate(hydra_dict_config)
 
             # Check that there are no more DictConfig
-            def _require_no_dict_config(object, depth=4):
+            def _require_no_dict_config(obj, depth=4):
+                """
+                Check that no DictConfig is used in the final object.
+
+                This often causes LOTS of very subtle problems.
+                For instance, load_dataset takes data_files, which can be a dict.
+                So it is pretty natural to add a dictionary to the YAML file.
+
+                Then, you take the config object.
+                But config.data_files is NOT a dict, being a DictConfig object instead.
+                This causes load_dataset NOT to work anymore, with a non-interpretable error.
+                Also, if you print config.data_files to double-check, it LOOKS LIKE a real dict, while it is not!
+
+                Args:
+                    obj: Object to be checked not to have DictConfig fields, recursively.
+                    depth: Depth of the recursion.
+                """
+                assert not isinstance(obj, DictConfig), 'Found a residual of DictConfig in the Hydra config file'
+                assert not isinstance(obj, ListConfig), 'Found a residual of ListConfig in the Hydra config file'
+
                 if depth == 0:
                     return
-                assert not isinstance(object, DictConfig)
-                for k in dir(config):
+                for k in dir(obj):
                     if k[0] != '_':
-                        v = getattr(config, k)
+                        print(k)
+                        v = getattr(obj, k)
                         _require_no_dict_config(v, depth=depth-1)
             _require_no_dict_config(config)
 
