@@ -13,7 +13,7 @@ from .utils import compute_perplexity, save_model_checkpoint, get_optimizer_and_
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base=None, config_name='config/base')
+@hydra.main(version_base=None, config_path="./config", config_name="base")
 def main(cfg: Config):
     # Create output directory
     cfg.model.output_dir.mkdir(parents=True, exist_ok=True)
