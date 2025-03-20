@@ -1,4 +1,6 @@
 import os
+import pathlib
+
 import torch
 from transformers import get_scheduler, AutoTokenizer
 
@@ -52,7 +54,7 @@ def save_model_checkpoint(model: torch.nn.Module, tokenizer: AutoTokenizer, outp
     """
     # Create output directory
     if step:
-        save_dir = os.path.join(output_dir, f"checkpoint-{step}")
+        save_dir = output_dir / f"checkpoint-{step}"
     else:
         save_dir = output_dir
 
@@ -65,10 +67,8 @@ def save_model_checkpoint(model: torch.nn.Module, tokenizer: AutoTokenizer, outp
 
 def get_optimizer_and_scheduler(
     model: torch.nn.Module,
-    learning_rate: float,
-    weight_decay: float,
+    training_config: TrainingConfig,
     num_training_steps: int,
-    warmup_steps: int,
 ) -> tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LRScheduler]:
     """
     Prepare optimizer and learning rate scheduler.
@@ -89,7 +89,7 @@ def get_optimizer_and_scheduler(
         {
             "params": [p for n, p in model.named_parameters()
                        if not any(nd in n for nd in no_decay)],
-            "weight_decay": weight_decay,
+            "weight_decay": training_config.weight_decay,
         },
         {
             "params": [p for n, p in model.named_parameters()
@@ -99,14 +99,14 @@ def get_optimizer_and_scheduler(
     ]
     optimizer = torch.optim.AdamW(
         optimizer_grouped_parameters,
-        lr=learning_rate
+        lr=training_config.learning_rate
     )
 
     # Prepare learning rate scheduler
     lr_scheduler = get_scheduler(
         name="linear",
         optimizer=optimizer,
-        num_warmup_steps=warmup_steps,
+        num_warmup_steps=training_config.warmup_steps,
         num_training_steps=num_training_steps,
     )
 

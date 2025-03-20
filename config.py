@@ -1,23 +1,52 @@
-# Training hyperparameters
-LEARNING_RATE = 5e-5
-BATCH_SIZE = 4
-GRADIENT_ACCUMULATION_STEPS = 1  # TODO: Check if this works correctly when > 1
-NUM_EPOCHS = 3
-WARMUP_STEPS = 100
-WEIGHT_DECAY = 0.01
-MAX_SEQ_LENGTH = 512
+"""
+Configuration schemas for Hydra files in config/
+"""
 
-# Model configuration
-MODEL_CHECKPOINT = "HuggingFaceTB/SmolLM2-135M"  # Pre-trained model
-OUTPUT_DIR = "./checkpoints/finetuned-smollm2"
+from omegaconf import OmegaConf
 
-# Dataset configuration
-DATASET_NAME = "wikitext"
-DATASET_CONFIG = "wikitext-2-raw-v1"
-TRAIN_SPLIT = "train"
-EVAL_SPLIT = "validation"
+import pathlib
+from dataclasses import dataclass
 
-# Logging and save configuration
-LOGGING_STEPS = 100
-EVALUATION_STEPS = 500
-SAVE_STEPS = 1000
+
+@dataclass
+class TrainingConfig:
+    learning_rate: float
+    batch_size: int
+    gradient_accumulation_steps: int
+    num_epochs: int
+    warmup_steps: int
+    weight_decay: float
+    max_seq_length: int
+
+
+@dataclass
+class ModelConfig:
+    pretrained_base: str
+    output_dir: pathlib.Path
+
+
+@dataclass
+class DatasetConfig:
+    name: str
+    config: str | None
+    train_split: str
+    eval_split: str
+
+
+@dataclass
+class LoggingConfig:
+    logging_steps: int
+    evaluation_steps: int
+    save_steps: int
+
+
+@dataclass
+class Config:
+    training: TrainingConfig
+    model: ModelConfig
+    dataset: DatasetConfig
+    logging: LoggingConfig
+
+
+# Register a custom resolver for paths
+OmegaConf.register_new_resolver("path", pathlib.Path)

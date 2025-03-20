@@ -1,5 +1,3 @@
-from torch.utils.data import Dataset
-from transformers import AutoTokenizer
 from datasets import load_dataset
 
 
@@ -66,22 +64,22 @@ def load_and_process_dataset(
         TextDataset: The training dataset.
         TextDataset: The evaluation dataset.
     """
-    if dataset_config:
+    if dataset_config.config:
         raw_dataset = load_dataset(
-            dataset_name,
-            dataset_config
+            dataset_config.name,
+            dataset_config.config,
         )
     else:
-        raw_dataset = load_dataset(dataset_name)
+        raw_dataset = load_dataset(dataset_config.name)
 
     train_dataset = TextDataset(
-        raw_dataset["train"],
+        raw_dataset[dataset_config.train_split],
         tokenizer,
         max_length,
         text_column
     )
     eval_dataset = TextDataset(
-        raw_dataset["validation"],
+        raw_dataset[dataset_config.eval_split],
         tokenizer,
         max_length,
         text_column

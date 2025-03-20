@@ -1,22 +1,29 @@
-import os
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import pathlib
+
+import hydra
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
 import torch
 
-from config import MODEL_CHECKPOINT, OUTPUT_DIR
+from config import Config
 
 
-def generate_text(model_path: str, prompt: str, max_length: int = 50) -> str:
+def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_length: int = 50) -> str:
     """
     Generate text from a specified prompt using the model at the given path.
 
     Args:
-        model_path (str): Path to the model directory.
+        model_path_or_name (pathlib.Path | str): Path to the model directory, or the name of the pretrained.
         prompt (str): The input prompt for text generation.
         max_length (int): The maximum length of the generated text.
 
     Returns:
         str: The generated text.
     """
+    if isinstance(model_path_or_name, pathlib.Path):
+        model_name = str(model_path_or_name.resolve())
+    else:
+        model_name = model_path_or_name
+
     # Load model and tokenizer
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     model: AutoModelForCausalLM = AutoModelForCausalLM.from_pretrained(
@@ -51,18 +58,21 @@ def generate_text(model_path: str, prompt: str, max_length: int = 50) -> str:
     return tokenizer.decode(outputs[0], skip_special_tokens=True)
 
 
-if __name__ == "__main__":
+
+@hydra.main(version_base=None, config_path="./config", config_name="base")
+def main(cfg: Config):
     # Check if checkpoints directory exists
-    if os.path.exists(OUTPUT_DIR):
+    model_path: str | pathlib.Path
+    if cfg.model.output_dir.exists():
         # Get last checkpoint
         model_path = max(
-            [os.path.join(OUTPUT_DIR, d) for d in os.listdir(OUTPUT_DIR)],
-            key=os.path.getmtime,
+            cfg.model.output_dir.glob("*"),
+            key=lambda f: f.stat().st_mtime,
         )
         print(f"- Using fine-tuned model from {model_path}")
     else:
         # Use pre-trained model
-        model_path = MODEL_CHECKPOINT
+        model_path = cfg.model.pretrained_base
         print(f"- No fine-tuned model found.")
         print(f"- Using pre-trained model from {model_path}")
 
@@ -78,3 +88,7 @@ if __name__ == "__main__":
         print(f"Prompt: {prompt}")
         print(f"Generated: {generated_text}")
         print("-" * 80)
+
+
+if __name__ == "__main__":
+    main()
