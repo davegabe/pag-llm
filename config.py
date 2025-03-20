@@ -46,7 +46,17 @@ class DatasetConfig:
 
     config: str | None = None
     files_to_download: list[str] | None = None
-    data_files: dict[list[str] | str] | None = None
+    data_files: dict[str, list[str] | str] | None = None
+
+    def __post_init__(self):
+        if self.files_to_download is not None and isinstance(self.files_to_download, ListConfig):
+            self.files_to_download = list(self.files_to_download)
+
+        if self.data_files is not None and isinstance(self.data_files, DictConfig):
+            self.data_files = {
+                k: list(v) if isinstance(v, ListConfig) else v
+                for k, v in self.data_files.items()
+            }
 
 
 @dataclass
@@ -122,7 +132,6 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[Config], None
                     return
                 for k in dir(obj):
                     if k[0] != '_':
-                        print(k)
                         v = getattr(obj, k)
                         _require_no_dict_config(v, depth=depth-1)
             _require_no_dict_config(config)

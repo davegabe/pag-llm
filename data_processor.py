@@ -1,8 +1,19 @@
-from datasets import load_dataset
-from torch.utils.data import Dataset
+import pathlib
+import logging
+import shutil
+import tempfile
+
+import requests
+import urllib.parse
+from tqdm import tqdm
+
+from datasets import load_dataset, IterableDataset
+from torch.utils.data import Dataset, DataLoader
 from transformers import PreTrainedTokenizerFast
 
-from config import DatasetConfig
+from config import DatasetConfig, TrainingConfig
+
+logger = logging.getLogger(__name__)
 
 
 class TextDataset(Dataset):
@@ -55,7 +66,7 @@ def load_and_process_dataset(
         tokenizer: PreTrainedTokenizerFast,
         max_length: int,
         text_column: str = "text"
-):
+) -> tuple[TextDataset, TextDataset]:
     """
     Load and process dataset for training.
 
@@ -69,14 +80,17 @@ def load_and_process_dataset(
         TextDataset: The training dataset.
         TextDataset: The evaluation dataset.
     """
-    if dataset_config.config:
-        raw_dataset = load_dataset(
-            dataset_config.name,
-            dataset_config.config,
-        )
-    else:
-        raw_dataset = load_dataset(dataset_config.name)
+    # Download needed files
+    download_files(dataset_config.files_to_download, destination_dir=pathlib.Path('./downloaded_dataset'))
 
+    # Load the dataset
+    raw_dataset = load_dataset(
+        path=dataset_config.name,
+        name=dataset_config.config,
+        data_files=dataset_config.data_files,
+    )
+
+    # Create splits
     train_dataset = TextDataset(
         raw_dataset[dataset_config.train_split],
         tokenizer,
@@ -91,3 +105,64 @@ def load_and_process_dataset(
     )
 
     return train_dataset, eval_dataset
+
+
+def load_and_process_dataloader(
+        dataset_config: DatasetConfig,
+        training_config: TrainingConfig,
+        tokenizer: PreTrainedTokenizerFast,
+        max_length: int,
+        text_column: str = "text",
+) -> tuple[DataLoader, DataLoader]:
+    train_dataset, eval_dataset = load_and_process_dataset(dataset_config, tokenizer, max_length, text_column)
+
+    # Create the dataloaders
+    train_dataloader = DataLoader(
+        dataset=train_dataset,
+        batch_size=training_config.batch_size,
+        shuffle=not isinstance(train_dataset, IterableDataset),  # You cannot shuffle an IterableDataset (streaming)
+        num_workers=dataset_config.num_workers,
+    )
+
+    eval_dataloader = DataLoader(
+        dataset=eval_dataset,
+        batch_size=training_config.batch_size,
+        shuffle=False,
+        num_workers=dataset_config.num_workers,
+    )
+
+    return train_dataloader, eval_dataloader
+
+
+def download_files(files_to_download: list[str], destination_dir: pathlib.Path, chunk_size=64*1024):
+    destination_dir = destination_dir.resolve().expanduser()
+    destination_dir.mkdir(parents=True, exist_ok=True)
+
+    for file_url_string in files_to_download:
+        filename = urllib.parse.urlparse(file_url_string).path.rsplit('/', maxsplit=1)[-1]
+        destination_file = destination_dir / filename
+        if destination_file.exists():
+            continue
+
+        # Download the file
+        response = requests.get(file_url_string, stream=True, allow_redirects=True)
+        if response.status_code != 200:
+            raise RuntimeError(f"Error downloading file {file_url_string}: got status code {response.status_code}")
+
+        # Prepare a progress bar
+        file_size = int(response.headers.get('Content-Length', 0))
+
+        # First, download the file into a temporary location,
+        # so that we won't save broken data if interrupted while downloading
+        temp_file = tempfile.NamedTemporaryFile(delete=False)
+        with tqdm(desc=filename, total=file_size, unit="iB", unit_scale=True, unit_divisor=1024) as progress_bar:
+            for data in response.iter_content(chunk_size=chunk_size):
+                size = temp_file.write(data)
+                progress_bar.update(size)
+
+        # Now, move it to the final destination
+        temp_file.flush()
+        temp_file.close()
+        shutil.move(temp_file.name, str(destination_file.absolute()))
+
+        logger.info(f'{file_url_string} successfully downloaded.')

@@ -17,8 +17,27 @@ model:
   hidden_layer_index: 20
 
 dataset:
-  name: 'wikitext'
-  config: 'wikitext-2-raw-v1'
+  _target_: config.DatasetConfig
+
+#  name: 'HuggingFaceFW/fineweb-edu'
+#  config: 'CC-MAIN-2016-26'
+
+  name: 'parquet'   # File format for the data_files
+  files_to_download:
+    # TRAIN split
+    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00000-of-00010.parquet'
+    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00001-of-00010.parquet'
+    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00002-of-00010.parquet'
+    # VALIDATION split
+    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00003-of-00010.parquet'
+  data_files:
+    train:
+      - 'downloaded_dataset/train-00000-of-00010.parquet'
+      - 'downloaded_dataset/train-00001-of-00010.parquet'
+      - 'downloaded_dataset/train-00002-of-00010.parquet'
+    validation:
+      - 'downloaded_dataset/train-00003-of-00010.parquet'
+
   train_split: 'train'
   eval_split: 'validation'
   num_workers: 3
