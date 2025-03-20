@@ -1,10 +1,9 @@
 import pathlib
 
-import hydra
 import torch
 
 import loader
-from config import Config
+from config import Config, apply_config
 
 
 def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_length: int = 50) -> str:
@@ -46,7 +45,7 @@ def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_lengt
 
 
 
-@hydra.main(version_base=None, config_path="./config", config_name="base")
+@apply_config()
 def main(cfg: Config):
     # Check if checkpoints directory exists
     model_path: str | pathlib.Path

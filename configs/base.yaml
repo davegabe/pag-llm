@@ -1,4 +1,7 @@
+_target_: config.Config
+
 training:
+  _target_: config.TrainingConfig
   learning_rate: 5e-5
   batch_size: 4
   gradient_accumulation_steps: 1   # TODO: Check if this works correctly when > 1
@@ -8,16 +11,24 @@ training:
   max_seq_length: 512
 
 model:
+  _target_: config.ModelConfig
   pretrained_base: 'HuggingFaceTB/SmolLM2-135M'
   output_dir: '${path:checkpoints/finetuned-smollm2}'
+  hidden_layer_index: 20
 
 dataset:
   name: 'wikitext'
   config: 'wikitext-2-raw-v1'
   train_split: 'train'
   eval_split: 'validation'
+  num_workers: 3
+  prefix:
+    _target_: config.DatasetPrefixConfig
+    min_length: 10
+    max_length: 30
 
 logging:
+  _target_: config.LoggingConfig
   logging_steps: 100
   evaluation_steps: 500
   save_steps: 1000

@@ -1,20 +1,18 @@
 import logging
 
-import hydra
 from tqdm import tqdm
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerFast, PreTrainedModel
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
 import loader
-from config import Config
+from config import Config, apply_config
 from data_processor import load_and_process_dataset
 from utils import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@hydra.main(version_base=None, config_path="./config", config_name="base")
+@apply_config()
 def main(cfg: Config):
     # Create output directory
     cfg.model.output_dir.mkdir(parents=True, exist_ok=True)

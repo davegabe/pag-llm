@@ -1,3 +1,4 @@
 *.pyc
 checkpoints/
 outputs/
+downloaded_dataset/
