@@ -39,8 +39,9 @@ class TextDataset(Dataset):
             return_tensors="pt"
         )
 
-        # For causal LM, labels are the same as input_ids
-        encodings["labels"] = encodings["input_ids"].clone()
+        # For causal LM, labels are the same as input_ids, shifted by 1
+        encodings["labels"] = encodings["input_ids"].roll(-1, dims=1)
+        encodings["labels"][:, -1] = 0
 
         # Convert to correct shape (squeeze out batch dimension)
         for key in encodings:
