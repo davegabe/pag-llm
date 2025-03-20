@@ -52,7 +52,7 @@ class TextDataset(Dataset):
 def load_and_process_dataset(
         dataset_config: DatasetConfig,
         tokenizer: PreTrainedTokenizerFast,
-        max_length: int = 512,
+        max_length: int,
         text_column: str = "text"
 ):
     """

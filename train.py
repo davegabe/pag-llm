@@ -6,6 +6,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
 
+import loader
 from config import Config
 from data_processor import load_and_process_dataset
 from utils import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
@@ -26,14 +27,7 @@ def main(cfg: Config):
     logger.info(f"Process rank: {accelerator.process_index}, device: {device}")
 
     # Load tokenizer and model
-    logger.info(f"Loading model from {cfg.model.pretrained_base}")
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(cfg.model.pretrained_base)
-
-    # Check if tokenizer has padding token, if not set it
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
-
-    model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(cfg.model.pretrained_base)
+    model, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base)
 
     # Load and process dataset
     logger.info(f"Loading dataset: {cfg.dataset.name}")

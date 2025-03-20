@@ -1,9 +1,9 @@
 import pathlib
 
 import hydra
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PreTrainedTokenizerFast
 import torch
 
+import loader
 from config import Config
 
 
@@ -19,22 +19,11 @@ def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_lengt
     Returns:
         str: The generated text.
     """
-    if isinstance(model_path_or_name, pathlib.Path):
-        model_name = str(model_path_or_name.resolve())
-    else:
-        model_name = model_path_or_name
-
     # Load model and tokenizer
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(model_name)
-    model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(model_name)
-
-    # Set pad token if it's not set
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    model, tokenizer = loader.load_model_and_tokenizer(model_path_or_name)
 
     # Move model to GPU if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = model.to(device)
 
     # Encode prompt with attention mask
     encoded_input = tokenizer(prompt, return_tensors="pt", padding=True)
