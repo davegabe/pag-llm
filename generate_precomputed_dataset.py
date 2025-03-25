@@ -33,7 +33,7 @@ def main(cfg: Config):
         flat_start_ids = sentences_start_idx[:, None] + \
                          cfg.dataset.prefix.min_length + \
                          torch.arange(prefix_len, device=device).repeat(batch_size).view(batch_size, -1) + \
-                         torch.arange(batch_size)[:, None] * cfg.training.max_seq_length
+                         torch.arange(batch_size, device=device)[:, None] * cfg.training.max_seq_length
 
         prefixes = torch.take(input_ids, flat_start_ids)
 
