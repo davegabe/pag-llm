@@ -44,7 +44,7 @@ dataset:
   prefix:
     _target_: config.DatasetPrefixConfig
     min_length: 10
-    max_length: 30
+    max_length: 34    # It has been observed that all samples have >= 34 tokens
 
 logging:
   _target_: config.LoggingConfig

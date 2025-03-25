@@ -58,9 +58,7 @@ def main(cfg: Config):
         selected_layer_hidden_state = outputs.hidden_states[0][cfg.model.hidden_layer_index]
         # Now we have to ignore the first min_length tokens, since they are only context, not our desired X
         prefix_hidden_state = selected_layer_hidden_state[:, cfg.dataset.prefix.min_length:, :]
-        print('Hidden states:', prefix_hidden_state.shape)
-
-        return
+        tqdm.write(f'Hidden states: {prefix_hidden_state.shape}\n')
 
 
 if __name__ == "__main__":
