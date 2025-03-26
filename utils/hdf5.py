@@ -206,6 +206,32 @@ def get_hidden_states_by_next_token(
         print(f"Error retrieving hidden states for token {token_id}: {str(e)}")
         raise
 
+def get_count_by_next_token(
+    file_path: str,
+    token_id: int
+) -> int:
+    """
+    Get the number of samples with a specific next token.
+
+    Args:
+        file_path: Path to the HDF5 file
+        token_id: The token ID to retrieve samples for
+
+    Returns:
+        int: Number of samples with the specified next token
+    """
+    try:
+        with h5py.File(file_path, 'r') as f:
+            token_id_str = str(token_id)
+
+            if 'token_indices' not in f or token_id_str not in f['token_indices']:
+                return 0
+
+            return len(f['token_indices'][token_id_str])
+    except Exception as e:
+        print(f"Error retrieving count for token {token_id}: {str(e)}")
+        raise
+
 
 if __name__ == "__main__":
     # Test the functions
