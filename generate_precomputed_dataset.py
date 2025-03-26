@@ -112,18 +112,15 @@ def process_batch(
         ),
     )
 
-    # Ignore hidden states before prefix.min_length
-    hidden_states = outputs.hidden_states[0][cfg.dataset.prefix.min_length:]
+    # Get the hidden states from the desired layer
+    selected_layer_hidden_state = outputs.hidden_states[0][cfg.model.hidden_layer_index]
 
-    # Extract hidden states from the specified layer
-    hidden_layer_idx = cfg.model.hidden_layer_index
-    if hidden_layer_idx >= len(hidden_states):
-        raise ValueError(f"Invalid hidden layer index: {hidden_layer_idx} (max: {len(hidden_states) - 1})")
-    selected_layer_hidden_state = hidden_states[hidden_layer_idx]    
+    # Now we have to ignore the first min_length tokens, since they are only context, not our desired X
+    prefix_hidden_state = selected_layer_hidden_state[:, cfg.dataset.prefix.min_length:, :]
 
     # Save the hidden states and next tokens
     samples_saved = save_hidden_states_to_hdf5(
-        hidden_states=selected_layer_hidden_state,
+        hidden_states=prefix_hidden_state,
         next_tokens=next_tokens,
         file_path=output_file,
         append=current_batch_idx > 0
