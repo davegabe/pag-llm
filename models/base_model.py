@@ -7,10 +7,10 @@ from config import Config
 
 class BaseLMModel(pl.LightningModule):
     def __init__(
-            self,
-            model: PreTrainedModel,
-            tokenizer: PreTrainedTokenizerFast,
-            config: Config
+        self,
+        model: PreTrainedModel,
+        tokenizer: PreTrainedTokenizerFast,
+        config: Config
     ):
         super().__init__()
         self.model = model

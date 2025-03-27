@@ -2,7 +2,7 @@ import pathlib
 
 import torch
 
-import loader
+import models.loader as loader
 from config import Config, apply_config
 
 

@@ -5,7 +5,7 @@ import os
 import numpy as np
 import h5py
 import matplotlib.pyplot as plt
-import loader
+import models.loader as loader
 
 from config import Config, apply_config
 from utils.hdf5 import get_hidden_states_by_next_token, get_count_by_next_token

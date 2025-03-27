@@ -6,7 +6,7 @@ from pytorch_lightning.loggers import WandbLogger
 from dotenv import load_dotenv
 import torch
 
-import loader
+import models.loader as loader
 from config import Config, apply_config
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
