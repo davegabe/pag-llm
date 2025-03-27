@@ -2,3 +2,5 @@
 checkpoints/
 outputs/
 downloaded_dataset/
+.env
+wandb/

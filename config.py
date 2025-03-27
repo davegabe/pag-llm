@@ -21,6 +21,7 @@ class TrainingConfig:
     warmup_steps: int
     weight_decay: float
     max_seq_length: int
+    method: str
 
 
 @dataclass

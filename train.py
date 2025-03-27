@@ -3,12 +3,18 @@ import logging
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from accelerate import Accelerator
+import wandb
+from dotenv import load_dotenv
 
 import loader
 from config import Config, apply_config
 from data_processor import load_and_process_dataset
 from utils.utilities import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
 
+# Load environment variables
+load_dotenv()
+
+# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -53,6 +59,33 @@ def main(cfg: Config):
         model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
     )
 
+    # Initialize wandb
+    model_name = cfg.model.pretrained_base.split("/")[-1]
+    wandb.init(
+        project="pag-llm",
+        config={
+            "model": model_name,
+            "method": cfg.training.method,
+            "hidden_layer_index": cfg.model.hidden_layer_index,
+            "learning_rate": cfg.training.learning_rate,
+            "batch_size": cfg.training.batch_size,
+            "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
+            "num_epochs": cfg.training.num_epochs,
+            "warmup_steps": cfg.training.warmup_steps,
+            "weight_decay": cfg.training.weight_decay,
+            "max_seq_length": cfg.training.max_seq_length,
+            "dataset": cfg.dataset.name,
+        },
+        name=f"{model_name}-{cfg.training.method}-{cfg.model.hidden_layer_index}",
+        tags=[
+            model_name,
+            cfg.training.method,
+            f"layer-{cfg.model.hidden_layer_index}",
+            cfg.dataset.name,
+        ],
+    )
+    wandb.watch(model, log="all", log_freq=cfg.logging.logging_steps)
+
     # Training loop
     logger.info("Starting training...")
     global_step = 0
@@ -74,10 +107,16 @@ def main(cfg: Config):
                 optimizer.zero_grad()
 
             # Log average loss every logging steps
-            if (step + 1) % cfg.logging.logging_steps == 0:
+            if (global_step) % cfg.logging.logging_steps == 0:
                 avg_loss = total_loss / cfg.logging.logging_steps
                 logger.info(f"Step {global_step}: Average loss = {avg_loss:.4f}")
                 total_loss = 0
+
+                # Log metrics to wandb
+                wandb.log({
+                    "train/loss": avg_loss,
+                    "learning_rate": optimizer.param_groups[0]['lr'],
+                }, step=global_step)
 
             global_step += 1
 
@@ -113,6 +152,9 @@ def main(cfg: Config):
     logger.info("Saving final model")
     unwrapped_model = accelerator.unwrap_model(model)
     save_model_checkpoint(unwrapped_model, tokenizer, cfg.model.output_dir)
+
+    # Finish the wandb run
+    wandb.finish()
 
     logger.info("Training completed!")
 
