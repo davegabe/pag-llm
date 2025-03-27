@@ -11,7 +11,7 @@ from transformers.generation import GenerateDecoderOnlyOutput
 
 import loader
 from config import Config, apply_config
-from data_processor import load_and_process_dataloader
+from data.data_processor import load_and_process_dataloader
 from utils.hdf5 import save_hidden_states_to_hdf5
 
 

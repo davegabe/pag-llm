@@ -16,8 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 class TextDataset(Dataset):
-    def __init__(self, dataset: Dataset, tokenizer: PreTrainedTokenizerFast, max_length: int = 512,
-                 text_column: str = 'text'):
+    def __init__(
+            self,
+            dataset: Dataset,
+            tokenizer: PreTrainedTokenizerFast,
+            max_length: int = 512,
+            text_column: str = 'text'
+    ):
         """
         Dataset class for text data.
 
@@ -86,9 +91,6 @@ def load_and_process_dataset(
         TextDataset: The training dataset.
         TextDataset: The evaluation dataset.
     """
-    # Download needed files
-    download_files(dataset_config.files_to_download, destination_dir=pathlib.Path('./downloaded_dataset'))
-
     # Load the dataset
     raw_dataset = load_dataset(
         path=dataset_config.name,

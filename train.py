@@ -1,15 +1,15 @@
+import os
 import logging
-
-from tqdm import tqdm
-from torch.utils.data import DataLoader
-from accelerate import Accelerator
-import wandb
+import pytorch_lightning as pl
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
+from pytorch_lightning.loggers import WandbLogger
 from dotenv import load_dotenv
 
 import loader
 from config import Config, apply_config
-from data_processor import load_and_process_dataset
-from utils.utilities import compute_perplexity, save_model_checkpoint, get_optimizer_and_scheduler
+from data.data_module import LMDataModule
+from models.base_model import BaseLMModel
+from models.pag_hidden_model import PAGHiddenModel
 
 # Load environment variables
 load_dotenv()
@@ -19,63 +19,51 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @apply_config()
-def main(cfg: Config):
+def train(cfg: Config):
     # Create output directory
-    cfg.model.output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Initialize accelerator for distributed training
-    accelerator = Accelerator(gradient_accumulation_steps=cfg.training.gradient_accumulation_steps)
-    device = accelerator.device
-
-    # Log process info
-    logger.info(f"Process rank: {accelerator.process_index}, device: {device}")
-
+    os.makedirs(cfg.model.output_dir, exist_ok=True)
+    
+    # Set seed for reproducibility
+    pl.seed_everything(444)
+    
     # Load tokenizer and model
     model, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base)
-
-    # Load and process dataset
-    logger.info(f"Loading dataset: {cfg.dataset.name}")
-    train_dataset, eval_dataset = load_and_process_dataset(cfg.dataset, tokenizer, cfg.training.max_seq_length)
-
-    # Create data loaders
-    train_dataloader = DataLoader(
-        train_dataset, batch_size=cfg.training.batch_size, shuffle=True
+    
+    # Create data module
+    data_module = LMDataModule(cfg, tokenizer)
+    
+    # Select the appropriate model based on training method
+    if cfg.training.method == "base":
+        lightning_model = BaseLMModel(model, tokenizer, cfg)
+    elif cfg.training.method == "pag-hidden":
+        # Use the HDF5 file with hidden states for the current model and layer
+        hdf5_file_path = f"{cfg.model.output_dir}/hidden_states_layer{cfg.model.hidden_layer_index}.hdf5"
+        
+        if not os.path.exists(hdf5_file_path):
+            logger.error(f"HDF5 file not found at {hdf5_file_path}. Please run hidden_state_collector first.")
+            raise FileNotFoundError(f"HDF5 file not found: {hdf5_file_path}")
+            
+        lightning_model = PAGHiddenModel(model, tokenizer, cfg, hdf5_file_path)
+    else:
+        raise ValueError(f"Unknown training method: {cfg.training.method}")
+    
+    # Setup callbacks
+    checkpoint_callback = ModelCheckpoint(
+        dirpath=cfg.model.output_dir,
+        filename="model-{step}",
+        save_top_k=5,
+        verbose=True,
+        monitor="val/loss",
+        mode="min",
+        save_last=True,
     )
-    eval_dataloader = DataLoader(
-        eval_dataset, batch_size=cfg.training.batch_size
-    )
-
-    # Setup optimizer and learning rate scheduler
-    num_training_steps = len(train_dataloader) * cfg.training.num_epochs
-    optimizer, lr_scheduler = get_optimizer_and_scheduler(
-        model,
-        cfg.training,
-        num_training_steps,
-    )
-
-    # Prepare for distributed training
-    # noinspection PyTypeChecker
-    model, optimizer, train_dataloader, eval_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, eval_dataloader, lr_scheduler
-    )
-
-    # Initialize wandb
+    
+    lr_monitor = LearningRateMonitor(logging_interval="step")
+    
+    # Setup logger
     model_name = cfg.model.pretrained_base.split("/")[-1]
-    wandb.init(
+    wandb_logger = WandbLogger(
         project="pag-llm",
-        config={
-            "model": model_name,
-            "method": cfg.training.method,
-            "hidden_layer_index": cfg.model.hidden_layer_index,
-            "learning_rate": cfg.training.learning_rate,
-            "batch_size": cfg.training.batch_size,
-            "gradient_accumulation_steps": cfg.training.gradient_accumulation_steps,
-            "num_epochs": cfg.training.num_epochs,
-            "warmup_steps": cfg.training.warmup_steps,
-            "weight_decay": cfg.training.weight_decay,
-            "max_seq_length": cfg.training.max_seq_length,
-            "dataset": cfg.dataset.name,
-        },
         name=f"{model_name}-{cfg.training.method}-{cfg.model.hidden_layer_index}",
         tags=[
             model_name,
@@ -84,80 +72,26 @@ def main(cfg: Config):
             cfg.dataset.name,
         ],
     )
-    wandb.watch(model, log="all", log_freq=cfg.logging.logging_steps)
-
-    # Training loop
-    logger.info("Starting training...")
-    global_step = 0
-
-    for epoch in range(cfg.training.num_epochs):
-        model.train()
-        total_loss = 0
-
-        progress_bar = tqdm(enumerate(train_dataloader), total=len(train_dataloader), desc=f"Epoch {epoch+1}")
-        for step, batch in progress_bar:
-            with accelerator.accumulate(model):
-                outputs = model(**batch)
-                loss = outputs.loss
-                total_loss += loss.item()
-
-                accelerator.backward(loss)
-                optimizer.step()
-                lr_scheduler.step()
-                optimizer.zero_grad()
-
-            # Log average loss every logging steps
-            if (global_step) % cfg.logging.logging_steps == 0:
-                avg_loss = total_loss / cfg.logging.logging_steps
-                logger.info(f"Step {global_step}: Average loss = {avg_loss:.4f}")
-                total_loss = 0
-
-                # Log metrics to wandb
-                wandb.log({
-                    "train/loss": avg_loss,
-                    "learning_rate": optimizer.param_groups[0]['lr'],
-                }, step=global_step)
-
-            global_step += 1
-
-            # Evaluate model every evaluation steps
-            if global_step % cfg.logging.evaluation_steps == 0:
-                logger.info(f"Evaluating at step {global_step}")
-                perplexity = compute_perplexity(model, eval_dataloader, device)
-                logger.info(f"Step {global_step}: Perplexity = {perplexity:.4f}")
-                model.train()
-
-            # Save checkpoint every save steps
-            if global_step % cfg.logging.save_steps == 0:
-                logger.info(f"Saving model at step {global_step}")
-                unwrapped_model = accelerator.unwrap_model(model)
-                save_model_checkpoint(
-                    unwrapped_model,
-                    tokenizer,
-                    cfg.model.output_dir,
-                    global_step,
-                )
-
-        # Save model at the end of each epoch
-        logger.info(f"Saving model after epoch {epoch+1}")
-        unwrapped_model = accelerator.unwrap_model(model)
-        save_model_checkpoint(
-            unwrapped_model,
-            tokenizer,
-            cfg.model.output_dir,
-            global_step,
-        )
-
+    
+    # Create trainer
+    trainer = pl.Trainer(
+        max_epochs=cfg.training.num_epochs,
+        accelerator="auto",
+        devices="auto",
+        logger=wandb_logger,
+        callbacks=[checkpoint_callback, lr_monitor],
+        log_every_n_steps=cfg.logging.logging_steps,
+        val_check_interval=cfg.logging.evaluation_steps,
+        accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
+    )
+    
+    # Train model
+    trainer.fit(lightning_model, data_module)
+    
     # Save final model
-    logger.info("Saving final model")
-    unwrapped_model = accelerator.unwrap_model(model)
-    save_model_checkpoint(unwrapped_model, tokenizer, cfg.model.output_dir)
-
-    # Finish the wandb run
-    wandb.finish()
-
+    lightning_model.model.save_pretrained(os.path.join(cfg.model.output_dir, "final"))
+    
     logger.info("Training completed!")
 
-
 if __name__ == "__main__":
-    main()
+    train()
