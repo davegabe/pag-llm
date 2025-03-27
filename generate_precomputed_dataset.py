@@ -182,6 +182,7 @@ def main(cfg: Config):
         # Process remaining batches
         pbar = tqdm(dataloader_iter, desc="Processing batches")
         for batch_idx, batch in enumerate(pbar):
+            batch: dict
             current_batch_idx = batch_idx + start_batch
 
             # Process the current batch
