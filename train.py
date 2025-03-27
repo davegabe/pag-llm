@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 from pytorch_lightning.loggers import WandbLogger
 from dotenv import load_dotenv
+import torch
 
 import loader
 from config import Config, apply_config
@@ -25,6 +26,9 @@ def train(cfg: Config):
     
     # Set seed for reproducibility
     pl.seed_everything(444)
+
+    # Set float32 matmul precision
+    torch.set_float32_matmul_precision('medium')
     
     # Load tokenizer and model
     model, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base)

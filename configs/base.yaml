@@ -4,7 +4,7 @@ training:
   _target_: config.TrainingConfig
   learning_rate: 5e-5
   batch_size: 4
-  gradient_accumulation_steps: 1   # TODO: Check if this works correctly when > 1
+  gradient_accumulation_steps: 32
   num_epochs: 3
   warmup_steps: 100
   weight_decay: 0.01
