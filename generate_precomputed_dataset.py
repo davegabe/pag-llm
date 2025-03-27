@@ -1,8 +1,9 @@
 """
 File to generate a precomputed dataset of hidden states.
 """
-from functools import reduce
 import os
+from functools import reduce
+
 import torch
 from tqdm import tqdm
 from transformers import GenerationConfig
@@ -169,6 +170,8 @@ def main(cfg: Config):
     total_processed = 0
     start_batch = 0
     samples_saved = 0
+
+    batch_idx = 0  # Define it anyway
 
     try:
         # Skip batches if resuming

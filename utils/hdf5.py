@@ -1,5 +1,6 @@
 import gc
 import os
+
 import h5py
 import numpy as np
 import torch
@@ -97,6 +98,7 @@ def _update_token_indices(
             )
 
 
+# noinspection GrazieInspection
 def save_hidden_states_to_hdf5(
     hidden_states: torch.Tensor,
     next_tokens: torch.Tensor,
@@ -233,7 +235,7 @@ def get_count_by_next_token(
         raise
 
 
-if __name__ == "__main__":
+def main():
     # Test the functions
     batch_size = 32
     hidden_dim = 768
@@ -244,6 +246,8 @@ if __name__ == "__main__":
     # Set seed for reproducibility
     torch.manual_seed(444)
 
+    file_path = 'test_hidden_states.h5'
+
     # Random tensor for testing
     for _ in tqdm(range(n_append), desc="Appending random tensors to HDF5"):
         # Create random tensors
@@ -251,7 +255,6 @@ if __name__ == "__main__":
         next_tokens = torch.randint(0, 10, (batch_size, 1))
 
         # Save hidden states to HDF5
-        file_path = 'test_hidden_states.h5'
         save_hidden_states_to_hdf5(hidden_states, next_tokens, file_path, append=True)
 
         del hidden_states, next_tokens
@@ -269,3 +272,7 @@ if __name__ == "__main__":
 
     # Clean up
     os.remove(file_path)
+
+
+if __name__ == "__main__":
+    main()
