@@ -6,7 +6,7 @@ import urllib.parse
 
 import requests
 from datasets import load_dataset, IterableDataset
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerFast
 
@@ -17,11 +17,11 @@ logger = logging.getLogger(__name__)
 
 class TextDataset(Dataset):
     def __init__(
-            self,
-            dataset: Dataset,
-            tokenizer: PreTrainedTokenizerFast,
-            max_length: int = 512,
-            text_column: str = 'text'
+        self,
+        dataset: Dataset,
+        tokenizer: PreTrainedTokenizerFast,
+        max_length: int = 512,
+        text_column: str = 'text'
     ):
         """
         Dataset class for text data.
@@ -98,19 +98,33 @@ def load_and_process_dataset(
         data_files=dataset_config.data_files,
     )
 
-    # Create splits
+    # Create training dataset
     train_dataset = TextDataset(
         raw_dataset[dataset_config.train_split],
         tokenizer,
         max_length,
         text_column
     )
+    train_size = len(train_dataset)
+
+    # Create evaluation dataset
     eval_dataset = TextDataset(
         raw_dataset[dataset_config.eval_split],
         tokenizer,
         max_length,
         text_column
     )
+    
+    # Limit evaluation dataset to 10% of training dataset size
+    target_eval_size = int(train_size * 0.1)
+    if len(eval_dataset) > target_eval_size:
+        print(f"WARNING: Evaluation dataset size is larger than 10% of training dataset size. "
+              f"Limiting evaluation dataset to {target_eval_size} samples.")
+        eval_dataset = Subset(eval_dataset, range(target_eval_size))
+
+    # Log dataset sizes
+    print(f'Train dataset size:\t{train_size}')
+    print(f'Eval dataset size:\t{len(eval_dataset)}')
 
     return train_dataset, eval_dataset
 
