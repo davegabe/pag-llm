@@ -89,6 +89,9 @@ def train(cfg: Config):
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
     )
     
+    # Evaluate model before training
+    trainer.validate(lightning_model, datamodule=data_module)
+
     # Train model
     trainer.fit(lightning_model, data_module)
     
