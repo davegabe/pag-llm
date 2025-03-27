@@ -38,10 +38,7 @@ class TextDataset(Dataset):
 
     def __getitem__(self, idx):
         batched_item = self.__getitems__([idx])
-        return {
-            k: v[0]
-            for k, v in batched_item.items()
-        }
+        return batched_item[0]
 
     def __getitems__(self, indices):
         items = self.dataset[indices]
@@ -60,11 +57,14 @@ class TextDataset(Dataset):
         encodings['labels'] = encodings['input_ids'].roll(-1, dims=1)
         encodings['labels'][:, -1] = 0
 
-        return {
-            'input_ids': encodings['input_ids'],
-            'attention_mask': encodings['attention_mask'],
-            'labels': encodings['labels'],
-        }
+        # Make it a list of single samples, as required by default DataLoader collate_fn
+        return [
+            {
+                k: v[i]
+                for k, v in encodings.items()
+            }
+            for i in range(len(texts))
+        ]
 
 
 def load_and_process_dataset(
