@@ -51,8 +51,10 @@ def main(cfg: Config):
     model_path: str | pathlib.Path
     if cfg.model.output_dir.exists():
         # Get last checkpoint
+        subdirs = list(cfg.model.output_dir.glob("*"))
+        subdirs = [d for d in subdirs if d.is_dir()]
         model_path = max(
-            cfg.model.output_dir.glob("*"),
+            subdirs,
             key=lambda f: f.stat().st_mtime,
         )
         print(f"- Using fine-tuned model from {model_path}")
