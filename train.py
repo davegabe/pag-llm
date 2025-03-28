@@ -32,7 +32,10 @@ def train(cfg: Config):
     torch.set_float32_matmul_precision('medium')
     
     # Load tokenizer and model
-    model, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base)
+    model, tokenizer = loader.load_model_and_tokenizer(
+        cfg.model.pretrained_base,
+        cfg.training.lora
+    )
     
     # Create data module
     data_module = LMDataModule(cfg, tokenizer)

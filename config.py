@@ -13,6 +13,13 @@ from dataclasses import dataclass
 
 
 @dataclass
+class LoraTConfig:
+    use_lora: bool
+    lora_rank: int
+    lora_dropout: float
+
+
+@dataclass
 class TrainingConfig:
     learning_rate: float
     batch_size: int
@@ -22,6 +29,7 @@ class TrainingConfig:
     weight_decay: float
     max_seq_length: int
     method: str
+    lora: LoraTConfig
 
 
 @dataclass

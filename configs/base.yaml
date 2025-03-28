@@ -3,13 +3,18 @@ _target_: config.Config
 training:
   _target_: config.TrainingConfig
   learning_rate: 5e-5
-  batch_size: 4
-  gradient_accumulation_steps: 32
+  batch_size: 32
+  gradient_accumulation_steps: 4
   num_epochs: 3
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 512
   method: 'base' # 'base', 'pag-hidden'
+  lora:
+    _target_: config.LoraTConfig
+    use_lora: True
+    lora_rank: 8
+    lora_dropout: 0.1
 
 model:
   _target_: config.ModelConfig

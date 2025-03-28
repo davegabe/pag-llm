@@ -147,7 +147,8 @@ def main(cfg: Config):
 
     # Load model and tokenizer
     model, tokenizer = loader.load_model_and_tokenizer(
-        cfg.model.pretrained_base
+        cfg.model.pretrained_base,
+        use_lora=cfg.training.use_lora
     )
     model.to(device)
     model.eval()

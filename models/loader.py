@@ -2,11 +2,17 @@
 File with loader functions, with our hyperparameters to pass to HuggingFace transformers library.
 """
 import pathlib
+import torch.nn as nn
 
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, AutoTokenizer, AutoModelForCausalLM
+from peft import LoraConfig, get_peft_model
+from config import LoraTConfig
 
 
-def load_model_and_tokenizer(model_path_or_name: pathlib.Path | str) -> tuple[PreTrainedModel, PreTrainedTokenizerFast]:
+def load_model_and_tokenizer(
+        model_path_or_name: pathlib.Path | str,
+        lora_config: LoraTConfig,
+) -> tuple[PreTrainedModel | nn.Module, PreTrainedTokenizerFast]:
     """
     Load the model and the tokenizer with some preconfigured parameters in the factory methods.
 
@@ -18,6 +24,7 @@ def load_model_and_tokenizer(model_path_or_name: pathlib.Path | str) -> tuple[Pr
     else:
         model_name = model_path_or_name
 
+    # Load the model and tokenizer
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map='auto',
@@ -32,4 +39,14 @@ def load_model_and_tokenizer(model_path_or_name: pathlib.Path | str) -> tuple[Pr
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    return model, tokenizer
+    # Set the model configuration
+    if lora_config.use_lora:
+        lora_config = LoraConfig(
+            r=lora_config.lora_rank,
+            lora_alpha=lora_config.lora_rank*2, # As used in (https://github.com/microsoft/LoRA)
+            lora_dropout=lora_config.lora_dropout
+        )
+        peft_model = get_peft_model(model, lora_config)
+        return peft_model, tokenizer
+    else:
+        return model, tokenizer
