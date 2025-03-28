@@ -1,6 +1,7 @@
 import lightning as pl
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, get_linear_schedule_with_warmup
+from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from config import Config
 from data.data_processor import BatchType
@@ -50,7 +51,7 @@ class BaseLMModel(pl.LightningModule):
         self.model.load_state_dict(checkpoint["model_state"])
 
     def training_step(self, batch: BatchType, batch_idx: int):
-        outputs = self.model(**batch)
+        outputs: CausalLMOutputWithPast = self.model(**batch)
         loss = outputs.loss
         self.log(
             "train/loss",

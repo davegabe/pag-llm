@@ -6,7 +6,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-
 def _initialize_hdf5_datasets(
     f: h5py.File,
     prefix_len: int,
@@ -172,7 +171,8 @@ def save_hidden_states_to_hdf5(
 def get_hidden_states_by_next_token(
     file_path: str,
     token_id: int,
-    max_samples: int = None
+    max_samples: int = None,
+    randomize: bool = True
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Efficiently retrieve hidden states with a specific next token.
@@ -181,23 +181,27 @@ def get_hidden_states_by_next_token(
         file_path: Path to the HDF5 file
         token_id: The token ID to retrieve samples for
         max_samples: Maximum number of samples to retrieve (None for all)
+        randomize: Whether to shuffle the samples
 
     Returns:
         tuple: (hidden_states, indices) where indices are the original positions in the dataset
     """
     try:
         with h5py.File(file_path, 'r') as f:
-            token_id_str = str(token_id)
+            token_id_str = str(token_id.item() if isinstance(token_id, torch.Tensor) else token_id)
 
             if 'token_indices' not in f or token_id_str not in f['token_indices']:
                 print(f"No samples found with next token ID {token_id}")
                 return np.empty((0, f.attrs['prefix_len'], f.attrs['hidden_dim'])), np.empty(0)
 
             # Get indices of samples with this token
-            indices = f['token_indices'][token_id_str][:]
+            indices = f['token_indices'][token_id_str]
+            size = len(indices)
 
-            # Limit number of samples if requested
-            if max_samples is not None:
+            # Get random indices if required
+            if randomize:
+                indices = np.random.permutation(size)[:max_samples]
+            else:
                 indices = indices[:max_samples]
 
             # Get the hidden states for these indices
@@ -234,6 +238,26 @@ def get_count_by_next_token(
         print(f"Error retrieving count for token {token_id}: {str(e)}")
         raise
 
+def get_all_next_tokens(file_path: str) -> torch.Tensor:
+    """
+    Get all unique next tokens present in the HDF5 file.
+
+    Args:
+        file_path: Path to the HDF5 file
+    
+    Returns:
+        torch.Tensor: Tensor of all unique next tokens
+    """
+    try:
+        with h5py.File(file_path, 'r') as f:
+            if 'token_indices' not in f:
+                return []
+
+            tokens = {int(k) for k in f['token_indices'].keys()}
+            return torch.tensor(list(tokens))
+    except Exception as e:
+        print(f"Error retrieving all next tokens: {str(e)}")
+        raise
 
 def main():
     # Test the functions

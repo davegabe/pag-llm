@@ -3,16 +3,17 @@ _target_: config.Config
 training:
   _target_: config.TrainingConfig
   learning_rate: 5e-5
-  batch_size: 32
-  gradient_accumulation_steps: 4
+  batch_size: 4
+  gradient_accumulation_steps: 32
   num_epochs: 3
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 512
-  method: 'base' # 'base', 'pag-hidden'
+  method: 'pag-hidden' # 'base', 'pag-hidden'
+  pag_classes: 8
   lora:
     _target_: config.LoraTConfig
-    use_lora: True
+    use_lora: False
     lora_rank: 8
     lora_dropout: 0.1
 
@@ -50,7 +51,7 @@ dataset:
   prefix:
     _target_: config.DatasetPrefixConfig
     min_length: 10
-    max_length: 34    # It has been observed that all samples have >= 34 tokens
+    max_length: 33    # It has been observed that all samples have >= 34 tokens
 
 logging:
   _target_: config.LoggingConfig

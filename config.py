@@ -29,6 +29,7 @@ class TrainingConfig:
     weight_decay: float
     max_seq_length: int
     method: str
+    pag_classes: int
     lora: LoraTConfig
 
 
