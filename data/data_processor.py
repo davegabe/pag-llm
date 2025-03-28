@@ -2,10 +2,12 @@ import logging
 import pathlib
 import shutil
 import tempfile
+from typing import TypedDict
 import urllib.parse
 
 import requests
 from datasets import load_dataset, IterableDataset
+import torch
 from torch.utils.data import Dataset, DataLoader, Subset
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerFast
@@ -14,6 +16,10 @@ from config import DatasetConfig, TrainingConfig
 
 logger = logging.getLogger(__name__)
 
+class BatchType(TypedDict):
+    input_ids: torch.Tensor
+    attention_mask: torch.Tensor
+    labels: torch.Tensor
 
 class TextDataset(Dataset):
     def __init__(
@@ -41,11 +47,11 @@ class TextDataset(Dataset):
         # noinspection PyTypeChecker
         return len(self.dataset)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> BatchType:
         batched_item = self.__getitems__([idx])
         return batched_item[0]
 
-    def __getitems__(self, indices):
+    def __getitems__(self, indices: list[int]) -> list[BatchType]:
         items = self.dataset[indices]
         texts = items[self.text_column]
 

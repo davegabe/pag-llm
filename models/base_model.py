@@ -3,6 +3,7 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, get_linear_schedule_with_warmup
 
 from config import Config
+from data.data_processor import BatchType
 
 
 class BaseLMModel(pl.LightningModule):
@@ -48,7 +49,7 @@ class BaseLMModel(pl.LightningModule):
         """Load model state when loading checkpoint"""
         self.model.load_state_dict(checkpoint["model_state"])
 
-    def training_step(self, batch, batch_idx):
+    def training_step(self, batch: BatchType, batch_idx: int):
         outputs = self.model(**batch)
         loss = outputs.loss
         self.log(
@@ -60,7 +61,7 @@ class BaseLMModel(pl.LightningModule):
         )
         return loss
 
-    def validation_step(self, batch, batch_idx):
+    def validation_step(self, batch: BatchType, batch_idx: int):
         outputs = self.model(**batch)
         loss = outputs.loss
         self.log("val/loss", loss, prog_bar=True, logger=True, sync_dist=True)
