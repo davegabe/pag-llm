@@ -28,14 +28,14 @@ dataset:
     # TRAIN split
     - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00000-of-00010.parquet'
     - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00001-of-00010.parquet'
-    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00002-of-00010.parquet'
+    #    - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00002-of-00010.parquet'
     # VALIDATION split
     - 'https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu/resolve/main/data/CC-MAIN-2016-26/train-00003-of-00010.parquet'
   data_files:
     train:
       - 'downloaded_dataset/train-00000-of-00010.parquet'
       - 'downloaded_dataset/train-00001-of-00010.parquet'
-      - 'downloaded_dataset/train-00002-of-00010.parquet'
+    #      - 'downloaded_dataset/train-00002-of-00010.parquet'
     validation:
       - 'downloaded_dataset/train-00003-of-00010.parquet'
 
