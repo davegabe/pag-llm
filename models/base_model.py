@@ -1,4 +1,4 @@
-import pytorch_lightning as pl
+import lightning as pl
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, get_linear_schedule_with_warmup
 

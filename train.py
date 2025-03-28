@@ -1,10 +1,11 @@
-import os
 import logging
-import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
-from pytorch_lightning.loggers import WandbLogger
-from dotenv import load_dotenv
+import os
+
+import lightning as pl
 import torch
+from dotenv import load_dotenv
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.loggers import WandbLogger
 
 import models.loader as loader
 from config import Config, apply_config

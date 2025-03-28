@@ -1,10 +1,12 @@
 import pathlib
-import pytorch_lightning as pl
+
+import lightning as pl
 from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizerFast
 
-from data.data_processor import load_and_process_dataset, download_files
 from config import Config
+from data.data_processor import load_and_process_dataset, download_files
+
 
 class LMDataModule(pl.LightningDataModule):
     def __init__(self, config: Config, tokenizer: PreTrainedTokenizerFast):
