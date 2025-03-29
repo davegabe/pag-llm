@@ -258,7 +258,7 @@ def get_all_next_tokens(file_path: str) -> torch.Tensor:
                 return torch.tensor([])
 
             tokens = {int(k) for k in f['token_indices'].keys()}
-            return torch.tensor(list(tokens))
+            return torch.tensor(list(tokens), dtype=torch.long)
     except Exception as e:
         print(f"Error retrieving all next tokens: {str(e)}")
         raise
