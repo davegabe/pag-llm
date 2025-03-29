@@ -36,6 +36,7 @@ def train(cfg: Config):
         cfg.model.pretrained_base,
         cfg.training.lora
     )
+    model.train()
     
     # Create data module
     data_module = LMDataModule(cfg, tokenizer)
@@ -94,7 +95,7 @@ def train(cfg: Config):
     )
     
     # Evaluate model before training
-    trainer.validate(lightning_model, datamodule=data_module)
+    # trainer.validate(lightning_model, datamodule=data_module)
 
     # Train model
     trainer.fit(lightning_model, data_module)
