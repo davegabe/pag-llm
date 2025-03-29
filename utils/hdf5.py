@@ -6,6 +6,7 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+
 def _initialize_hdf5_datasets(
     f: h5py.File,
     prefix_len: int,
@@ -251,7 +252,7 @@ def get_all_next_tokens(file_path: str) -> torch.Tensor:
     try:
         with h5py.File(file_path, 'r') as f:
             if 'token_indices' not in f:
-                return []
+                return torch.tensor([])
 
             tokens = {int(k) for k in f['token_indices'].keys()}
             return torch.tensor(list(tokens))

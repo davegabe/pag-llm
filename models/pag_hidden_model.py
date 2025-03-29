@@ -3,10 +3,9 @@ import torch.nn.functional as F
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from data.data_processor import BatchType
-
-from .base_model import BaseLMModel
+from base_model import BaseLMModel
 from config import Config
+from data.data_processor import BatchType
 from utils.hdf5 import get_hidden_states_by_next_token, get_all_next_tokens
 
 
