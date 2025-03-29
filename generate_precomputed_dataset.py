@@ -11,23 +11,22 @@ from transformers.generation import GenerateDecoderOnlyOutput
 
 import models.loader as loader
 from config import Config, apply_config
-from data.data_processor import load_and_process_dataloader
+from data.data_module import LMDataModule
+from data.data_processor import BatchType
 from utils.hdf5 import save_hidden_states_to_hdf5
 
 
 def extract_prefixes_and_next_tokens(
-    input_ids: torch.Tensor,
-    attn_mask: torch.Tensor,
+        batch: BatchType,
     max_seq_length: int,
     prefix_max_length: int,
-    device: torch.device
+        device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Extract prefixes and their corresponding next tokens from input sequences.
 
     Args:
-        input_ids: Input token IDs [batch_size, seq_length]
-        attn_mask: Attention mask [batch_size, seq_length]
+        batch: Batched text data from TextDataset
         max_seq_length: Maximum sequence length
         prefix_max_length: Maximum prefix length
         device: Torch device
@@ -36,10 +35,10 @@ def extract_prefixes_and_next_tokens(
         prefixes: Tensor of prefix token IDs [batch_size, prefix_len]
         next_tokens: Tensor of next token IDs [batch_size, 1]
     """
-    batch_size = input_ids.size(0)
+    batch_size = batch.input_ids.size(0)
 
     # Get the index of the start token of each sentence (ignoring padding)
-    sentences_start_idx: torch.Tensor = max_seq_length - attn_mask.sum(dim=1)
+    sentences_start_idx: torch.Tensor = max_seq_length - batch.attention_mask.sum(dim=1)
     
     # To get the prefix tokens using batched operations:
     # - Start with the index of the start token of each sentence (sentences_start_idx)
@@ -50,16 +49,15 @@ def extract_prefixes_and_next_tokens(
                         torch.arange(batch_size, device=device)[:, None] * max_seq_length
 
     # Extract the prefixes from the input_ids
-    prefixes = torch.take(input_ids, flat_start_ids)
+    prefixes = torch.take(batch.input_ids, flat_start_ids)
 
     # Double check that the attention masks are all ones
-    attn_mask_items = torch.take(attn_mask, flat_start_ids).sum().cpu().item()
+    attn_mask_items = torch.take(batch.attention_mask, flat_start_ids).sum().cpu().item()
     prefixes_items_count = reduce(lambda x, y: x * y, prefixes.shape, 1)
     assert attn_mask_items == prefixes_items_count
 
-    # Get the next token after the last position in the prefix
-    next_token_indices = flat_start_ids[:, -1] + 1
-    next_tokens = torch.take(input_ids, next_token_indices).unsqueeze(1)
+    # Get the next token = same indexes as prefixes, but in the labels Tensor
+    next_tokens = torch.take(batch.labels, flat_start_ids)
 
     return prefixes, next_tokens
 
@@ -67,7 +65,7 @@ def extract_prefixes_and_next_tokens(
 def process_batch(
     model: torch.nn.Module,
     pad_token_id: int,
-    batch: dict,
+        batch: BatchType,
     device: torch.device,
     cfg: Config,
     output_file: str,
@@ -88,17 +86,12 @@ def process_batch(
     Returns:
         int: Number of samples saved to the file
     """
-    # Move inputs to the device
-    input_ids = batch['input_ids'].to(device)
-    attn_mask = batch['attention_mask'].to(device)
-
     # Extract prefixes and next tokens
     prefixes, next_tokens = extract_prefixes_and_next_tokens(
-        input_ids=input_ids,
-        attn_mask=attn_mask,
+        batch=batch,
         max_seq_length=cfg.training.max_seq_length,
         prefix_max_length=cfg.dataset.prefix.max_length,
-        device=device
+        device=device,
     )
 
     # Generate hidden states for the prefixes
@@ -154,12 +147,10 @@ def main(cfg: Config):
     model.eval()
 
     # Load the training dataset
-    train_dataloader, _ = load_and_process_dataloader(
-        cfg.dataset,
-        cfg.training,
-        tokenizer,
-        cfg.training.max_seq_length
-    )
+    data_module = LMDataModule(cfg, tokenizer)
+    data_module.prepare_data()
+    data_module.setup()
+    train_dataloader = data_module.train_dataloader()
 
     # Create the output directory if it doesn't exist
     output_dir = cfg.model.output_dir
@@ -183,7 +174,7 @@ def main(cfg: Config):
         # Process remaining batches
         pbar = tqdm(dataloader_iter, desc="Processing batches")
         for batch_idx, batch in enumerate(pbar):
-            batch: dict
+            batch: BatchType = batch.to(device)
             current_batch_idx = batch_idx + start_batch
 
             # Process the current batch
@@ -197,7 +188,7 @@ def main(cfg: Config):
                 current_batch_idx=current_batch_idx
             )
 
-            total_processed += batch['input_ids'].size(0)
+            total_processed += batch.input_ids.size(0)
 
             # Write summary to the progress bar
             pbar.set_postfix(samples_saved=samples_saved)

@@ -2,24 +2,46 @@ import logging
 import pathlib
 import shutil
 import tempfile
-from typing import TypedDict
 import urllib.parse
 
 import requests
-from datasets import load_dataset, IterableDataset
 import torch
-from torch.utils.data import Dataset, DataLoader, Subset
+from datasets import load_dataset
+from torch.utils.data import Dataset, Subset
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerFast
 
-from config import DatasetConfig, TrainingConfig
+from config import DatasetConfig
 
 logger = logging.getLogger(__name__)
 
-class BatchType(TypedDict):
+
+class BatchType:
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     labels: torch.Tensor
+
+    def __init__(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: torch.Tensor):
+        self.input_ids = input_ids
+        self.attention_mask = attention_mask
+        self.labels = labels
+
+    def to(self, device: torch.device) -> 'BatchType':
+        self.input_ids = self.input_ids.to(device)
+        self.attention_mask = self.attention_mask.to(device)
+        self.labels = self.labels.to(device)
+        return self
+
+    def __getitem__(self, index: int) -> 'BatchType':
+        return self.__class__(self.input_ids[index], self.attention_mask[index], self.labels[index])
+
+    def to_dict(self) -> dict[str, torch.Tensor]:
+        return {
+            'input_ids': self.input_ids,
+            'attention_mask': self.attention_mask,
+            'labels': self.labels,
+        }
+
 
 class TextDataset(Dataset):
     def __init__(
@@ -48,10 +70,9 @@ class TextDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> BatchType:
-        batched_item = self.__getitems__([idx])
-        return batched_item[0]
+        return self.__getitems__([idx])[0]
 
-    def __getitems__(self, indices: list[int]) -> list[BatchType]:
+    def __getitems__(self, indices: list[int]) -> BatchType:
         items = self.dataset[indices]
         texts = items[self.text_column]
 
@@ -68,14 +89,9 @@ class TextDataset(Dataset):
         encodings['labels'] = encodings['input_ids'].roll(-1, dims=1)
         encodings['labels'][:, -1] = 0
 
-        # Make it a list of single samples, as required by default DataLoader collate_fn
-        return [
-            {
-                k: v[i]
-                for k, v in encodings.items()
-            }
-            for i in range(len(texts))
-        ]
+        return BatchType(input_ids=encodings['input_ids'],
+                         attention_mask=encodings['attention_mask'],
+                         labels=encodings['labels'])
 
 
 def load_and_process_dataset(
@@ -133,35 +149,6 @@ def load_and_process_dataset(
     print(f'Eval dataset size:\t{len(eval_dataset)}')
 
     return train_dataset, eval_dataset
-
-
-def load_and_process_dataloader(
-        dataset_config: DatasetConfig,
-        training_config: TrainingConfig,
-        tokenizer: PreTrainedTokenizerFast,
-        max_length: int,
-        text_column: str = 'text',
-) -> tuple[DataLoader, DataLoader]:
-    train_dataset, eval_dataset = load_and_process_dataset(dataset_config, tokenizer, max_length, text_column)
-
-    # Create the dataloaders
-    train_dataloader = DataLoader(
-        dataset=train_dataset,
-        batch_size=training_config.batch_size,
-        shuffle=not isinstance(train_dataset, IterableDataset),  # You cannot shuffle an IterableDataset (streaming)
-        num_workers=dataset_config.num_workers,
-        collate_fn=lambda x: x,
-    )
-
-    eval_dataloader = DataLoader(
-        dataset=eval_dataset,
-        batch_size=training_config.batch_size,
-        shuffle=False,
-        num_workers=dataset_config.num_workers,
-        collate_fn=lambda x: x,
-    )
-
-    return train_dataloader, eval_dataloader
 
 
 def download_files(files_to_download: list[str], destination_dir: pathlib.Path, chunk_size=64*1024):

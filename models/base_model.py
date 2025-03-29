@@ -51,7 +51,7 @@ class BaseLMModel(pl.LightningModule):
         self.model.load_state_dict(checkpoint["model_state"])
 
     def training_step(self, batch: BatchType, batch_idx: int):
-        outputs: CausalLMOutputWithPast = self.model(**batch)
+        outputs: CausalLMOutputWithPast = self.model(**batch.to_dict())
         loss = outputs.loss
         self.log(
             "train/loss",
@@ -63,7 +63,7 @@ class BaseLMModel(pl.LightningModule):
         return loss
 
     def validation_step(self, batch: BatchType, batch_idx: int):
-        outputs = self.model(**batch)
+        outputs = self.model(**batch.to_dict())
         loss = outputs.loss
         self.log("val/loss", loss, prog_bar=True, logger=True, sync_dist=True)
 
