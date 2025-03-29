@@ -33,7 +33,7 @@ def extract_prefixes_and_next_tokens(
 
     Returns:
         prefixes: Tensor of prefix token IDs [batch_size, prefix_len]
-        next_tokens: Tensor of next token IDs [batch_size, 1]
+        next_tokens: Tensor of next token IDs [batch_size, prefix_len]
     """
     batch_size = batch.input_ids.size(0)
 
@@ -110,12 +110,15 @@ def process_batch(
     selected_layer_hidden_state = outputs.hidden_states[0][cfg.model.hidden_layer_index]
 
     # Now we have to ignore the first min_length tokens, since they are only context, not our desired X
-    prefix_hidden_state = selected_layer_hidden_state[:, cfg.dataset.prefix.min_length:, :]
+    prefix_hidden_state = selected_layer_hidden_state[:, cfg.dataset.prefix.min_length:]
+
+    # As well, ignore the first min_length tokens, to make them in sync with the prefix_hidden_state
+    prefix_next_tokens = next_tokens[:, cfg.dataset.prefix.min_length:]
 
     # Save the hidden states and next tokens
     samples_saved = save_hidden_states_to_hdf5(
         hidden_states=prefix_hidden_state,
-        next_tokens=next_tokens,
+        next_tokens=prefix_next_tokens,
         file_path=output_file,
         append=current_batch_idx > 0
     )

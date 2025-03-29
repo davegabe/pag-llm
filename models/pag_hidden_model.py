@@ -1,11 +1,12 @@
 import torch
+# noinspection PyPep8Naming
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from base_model import BaseLMModel
 from config import Config
 from data.data_processor import BatchType
+from models.base_model import BaseLMModel
 from utils.hdf5 import get_hidden_states_by_next_token, get_all_next_tokens
 
 
@@ -41,13 +42,13 @@ class PAGHiddenModel(BaseLMModel):
         # Get hidden states for the next token
         # FIXME: Do not use LOOPS
         for next_token in next_tokens:
-            hidden_states, _, next_tokens = get_hidden_states_by_next_token(
+            hidden_states, next_tokens = get_hidden_states_by_next_token(
                 self.hdf5_file_path,
                 next_token,
                 max_samples=1,
                 randomize=True
             )
-            print(next_tokens, hidden_states.shape)
+            print(next_tokens.shape, hidden_states.shape)
             raise Exception()
             emb_by_next_token.append(torch.from_numpy(hidden_states).to(self.device))
 
@@ -56,12 +57,12 @@ class PAGHiddenModel(BaseLMModel):
     
     def training_step(self, batch: BatchType, batch_idx: int):
         # Forward pass
-        outputs: CausalLMOutputWithPast = self.model(**batch, output_hidden_states=True)
+        outputs: CausalLMOutputWithPast = self.model(**batch.to_dict(), output_hidden_states=True)
         loss = outputs.loss
         hidden_states = outputs.hidden_states[self.hidden_layer_index]
         
         # Retrieve next tokens
-        next_tokens = batch["labels"]   # [N, T]
+        next_tokens = batch.labels  # [N, T]
         print('next_tokens:', next_tokens.shape)
 
         # Get hidden states for the next tokens
