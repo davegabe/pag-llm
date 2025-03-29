@@ -13,7 +13,7 @@ training:
   pag_classes: 8
   lora:
     _target_: config.LoraTConfig
-    use_lora: False
+    use_lora: True
     lora_rank: 8
     lora_dropout: 0.1
 
