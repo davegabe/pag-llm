@@ -1,12 +1,15 @@
+import collections.abc
 import logging
 import pathlib
 import shutil
 import tempfile
 import urllib.parse
+from typing import Generator
 
 import requests
 import torch
 from datasets import load_dataset
+from torch import Tensor
 from torch.utils.data import Dataset, Subset
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerFast
@@ -16,7 +19,7 @@ from config import DatasetConfig
 logger = logging.getLogger(__name__)
 
 
-class BatchType:
+class BatchType(collections.abc.Iterable):
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     labels: torch.Tensor
@@ -32,8 +35,10 @@ class BatchType:
         self.labels = self.labels.to(device)
         return self
 
-    def __getitem__(self, index: int) -> 'BatchType':
-        return self.__class__(self.input_ids[index], self.attention_mask[index], self.labels[index])
+    def __getitem__(self, batch_index: int) -> 'BatchType':
+        return self.__class__(input_ids=self.input_ids[batch_index],
+                              attention_mask=self.attention_mask[batch_index],
+                              labels=self.labels[batch_index])
 
     def to_dict(self) -> dict[str, torch.Tensor]:
         return {
@@ -41,6 +46,17 @@ class BatchType:
             'attention_mask': self.attention_mask,
             'labels': self.labels,
         }
+
+    def __len__(self) -> int:
+        if len(self.input_ids) == 1:
+            return 1
+        else:
+            return len(self.input_ids)
+
+    def __iter__(self) -> Generator[Tensor, None, None]:
+        yield self.input_ids
+        yield self.attention_mask
+        yield self.labels
 
 
 class TextDataset(Dataset):
