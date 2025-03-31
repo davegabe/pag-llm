@@ -32,14 +32,7 @@ def load_model_and_tokenizer(
         device_map='auto',
     )
 
-    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
-        model_name,
-        padding_side='left',
-    )
-
-    # Check if tokenizer has padding token, if not set it
-    if tokenizer.pad_token is None:
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer = load_tokenizer(model_name)
 
     # Set the model configuration
     if lora_config and lora_config.use_lora:
@@ -52,3 +45,21 @@ def load_model_and_tokenizer(
         return peft_model, tokenizer
     else:
         return model, tokenizer
+
+
+def load_tokenizer(model_path_or_name: pathlib.Path | str) -> PreTrainedTokenizerFast:
+    if isinstance(model_path_or_name, pathlib.Path):
+        model_name = str(model_path_or_name.resolve())
+    else:
+        model_name = model_path_or_name
+
+    tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
+        model_name,
+        padding_side='left',
+    )
+
+    # Check if tokenizer has padding token, if not set it
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    return tokenizer

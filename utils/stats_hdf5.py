@@ -2,11 +2,12 @@
 Utility to query and analyze hidden states from the precomputed dataset.
 """
 import os
-import numpy as np
+
 import h5py
 import matplotlib.pyplot as plt
-import models.loader as loader
+import numpy as np
 
+import models.loader as loader
 from config import Config, apply_config
 from utils.hdf5 import get_hidden_states_by_next_token, get_count_by_next_token
 
@@ -164,9 +165,7 @@ def main(cfg: Config) -> None:
     print(f"Configuration loaded successfully")
 
     # Load model and tokenizer
-    _, tokenizer = loader.load_model_and_tokenizer(
-        cfg.model.pretrained_base
-    )
+    tokenizer = loader.load_tokenizer(cfg.model.pretrained_base)
     
     # Determine file path from config
     output_dir = cfg.model.output_dir
