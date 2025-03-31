@@ -86,13 +86,28 @@ class TextDataset(Dataset):
         return len(self.dataset)
 
     def __getitem__(self, idx: int) -> BatchType:
-        return self.__getitems__([idx])[0]
+        #
+        # All this mess is because when you do dataset[indexes], still __getitem__ is called
+        is_batch = False
+        if isinstance(idx, int):
+            idx = [idx]
+        elif isinstance(idx, torch.Tensor) and idx.ndim == 0:
+            idx = [idx.item()]
+        else:
+            is_batch = True
+
+        # Otherwise, it is already a tensor / list of indices
+        batch_type = self.__getitems__(idx)
+        if is_batch:
+            return batch_type
+        else:
+            return batch_type[0]
 
     def __iter__(self) -> Generator[BatchType, None, None]:
         for i in range(len(self)):
             yield self.__getitem__(i)
 
-    def __getitems__(self, indices: list[int]) -> BatchType:
+    def __getitems__(self, indices: list[int] | torch.Tensor) -> BatchType:
         items = self.dataset[indices]
         texts = items[self.text_column]
 
@@ -105,7 +120,7 @@ class TextDataset(Dataset):
             return_tensors='pt',
         )
 
-        # For causal LM, labels are the same as input_ids, shifted by 1
+        # For causals LM, labels are the same as input_ids, shifted by 1
         encodings['labels'] = encodings['input_ids'].roll(-1, dims=1)
         encodings['labels'][:, -1] = 0
 
