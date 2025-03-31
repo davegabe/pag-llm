@@ -88,6 +88,10 @@ class TextDataset(Dataset):
     def __getitem__(self, idx: int) -> BatchType:
         return self.__getitems__([idx])[0]
 
+    def __iter__(self) -> Generator[BatchType, None, None]:
+        for i in range(len(self)):
+            yield self.__getitem__(i)
+
     def __getitems__(self, indices: list[int]) -> BatchType:
         items = self.dataset[indices]
         texts = items[self.text_column]
