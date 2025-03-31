@@ -10,7 +10,8 @@ from dataclasses import dataclass
 from tqdm import tqdm
 
 from config import DatasetPrefixConfig, apply_config, Config
-from data.data_processor import TextDataset, load_and_process_dataset
+from data.data_module import LMDataModule
+from data.data_processor import TextDataset
 from models import loader
 
 
@@ -60,7 +61,11 @@ class DatasetIndexByToken:
 @apply_config()
 def _main(cfg: Config):
     _, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base, lora_config=None)
-    train_dataset, _ = load_and_process_dataset(cfg.dataset, tokenizer, cfg.training.max_seq_length)
+
+    datamodule = LMDataModule(cfg, tokenizer)
+    datamodule.prepare_data()
+    datamodule.setup()
+    train_dataset = datamodule.train_dataset
     index = DatasetIndexByToken()
     index.create_index(train_dataset, cfg.dataset.prefix)
     index.save(cfg.model.output_dir / 'dataset_index_by_token.pickle')
