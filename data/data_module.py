@@ -26,8 +26,8 @@ class LMDataModule(pl.LightningDataModule):
     def setup(self, stage=None):
         """Load datasets"""
         self.train_dataset, self.val_dataset = load_and_process_dataset(
-            self.config.dataset, 
-            self.tokenizer, 
+            self.config.dataset,
+            self.tokenizer,
             self.config.training.max_seq_length
         )
     
