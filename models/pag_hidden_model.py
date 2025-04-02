@@ -1,13 +1,13 @@
 import torch
 # noinspection PyPep8Naming
 import torch.nn.functional as F
-from transformers import PreTrainedModel, PreTrainedTokenizerFast
+from transformers import PreTrainedModel, PreTrainedTokenizerFast, GenerationConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from config import Config
-from data.data_processor import BatchType
+from data.data_processor import BatchType, TextDataset
 from models.base_model import BaseLMModel
-from utils.hdf5 import get_hidden_states_by_next_token, get_all_next_tokens
+from utils.index_token_to_dataset_item import DatasetIndexByToken
 
 
 class PAGHiddenModel(BaseLMModel):
@@ -16,40 +16,16 @@ class PAGHiddenModel(BaseLMModel):
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
         config: Config,
-        hdf5_file_path: str
+            dataset_index: DatasetIndexByToken,
+            train_dataset: TextDataset,
     ):
         super().__init__(model, tokenizer, config)
-        self.hdf5_file_path = hdf5_file_path
-        self.used_next_tokens = get_all_next_tokens(hdf5_file_path).to(model.device)
+        self.dataset_index = dataset_index.to(model.device)
+        self.train_dataset = train_dataset
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes # Number of different next tokens to consider
+        self.pag_samples = config.training.pag_samples  # Number of different samples for each next token considered
         self.criterion = torch.nn.CrossEntropyLoss()
-
-    def get_pag_samples(self) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Get hidden states for the next tokens to use for the PAG loss.
-
-        Returns:
-            torch.Tensor: Hidden states for the next tokens. Shape: [pag_classes, D]
-            torch.Tensor: Ground-truth labels for the next tokens. Shape: [pag_classes]
-        """
-        emb_by_next_token = []
-
-        # Get random next tokens
-        random_next_tokens = torch.randperm(len(self.used_next_tokens), device=self.device)[:self.pag_classes]
-        next_tokens = self.used_next_tokens[random_next_tokens]
-        
-        # Get hidden states for the next token
-        for next_token in next_tokens:
-            hidden_states, _ = get_hidden_states_by_next_token(
-                self.hdf5_file_path,
-                next_token,
-                max_samples=1,
-                randomize=True,
-            )
-            emb_by_next_token.append(torch.from_numpy(hidden_states).to(self.device))
-
-        return torch.cat(emb_by_next_token, dim=0), next_tokens
 
     
     def training_step(self, batch: BatchType, batch_idx: int):
@@ -59,16 +35,46 @@ class PAGHiddenModel(BaseLMModel):
         hidden_states = outputs.hidden_states[self.hidden_layer_index]
         hidden_states.requires_grad_(True)
 
-        # Get hidden states for the next tokens
-        embs_by_next_token, embs_ground_truth_next_tokens = self.get_pag_samples()  # [pag_classes, D], [pag_classes]
+        # Get samples for the next tokens
+        #
+        # pag_input_ids: [k * m, T]
+        # pag_attn_mask: [k * m, T]
+        # pag_classes:   [k]
+        k, m = self.pag_classes, self.pag_samples
+        pag_input_ids, pag_attn_mask, pag_classes = self.dataset_index.get_rand_samples_by_token(
+            dataset=self.train_dataset,
+            k_classes=k,
+            num_samples=m,
+        )
+
+        # Get, in a single shot, all the hidden states
+        with torch.no_grad():
+            pag_output = self.model.generate(
+                input_ids=pag_input_ids,
+                attention_mask=pag_attn_mask,
+                generation_config=GenerationConfig(
+                    max_new_tokens=1,  # We only need the hidden states for the prefix tokens,
+                    # not actual autoregressive generation
+                    output_hidden_states=True,
+                    return_dict_in_generate=True,
+                    pad_token_id=self.train_dataset.tokenizer.pad_token_id,
+                )
+            )
+
+            # We take [:, -1] since the padding is on the left, at the beginning
+            assert pag_attn_mask[:, -1].sum() == (k * m), 'Expected to have padding on the left, not on the right!'
+            pag_hidden_states = pag_output.hidden_states[0][self.hidden_layer_index][:, -1].view(k, m, -1)
+
 
         # For each next token (classes of the PAG loss)
         loss_cos = torch.tensor(0.0, device=self.device)
         # Iterate for each pag_class
-        for embs_for_next_token, ground_truth_token in zip(embs_by_next_token, embs_ground_truth_next_tokens):
+        for class_hidden_layer, ground_truth_token in zip(pag_hidden_states, pag_classes):
+            print(f'class_hidden_layer: {class_hidden_layer.shape}')
+            print(f'ground_truth_token: {ground_truth_token.shape}')
+
             # Compute x-x'
-            print(f'{hidden_states.shape=}, {embs_for_next_token.shape=}, {ground_truth_token.shape=}')
-            g_batch = hidden_states - embs_for_next_token
+            g_batch = hidden_states - class_hidden_layer
             g_batch_y = ground_truth_token * torch.ones_like(g_batch[:, :, 0],
                                                              dtype=torch.long)  # The right token is only one
 
@@ -93,7 +99,7 @@ class PAGHiddenModel(BaseLMModel):
             loss_cos += class_loss_cos
 
         # Average the cosine similarity loss
-        loss_cos /= embs_ground_truth_next_tokens.size(0)
+        loss_cos /= pag_classes.size(0)
 
         # TODO: in the final loss, add some lambda hyperparameters!
         loss = loss_ce + loss_cos

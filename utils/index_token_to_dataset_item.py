@@ -80,9 +80,13 @@ class DatasetIndexByToken:
 
         all_idx_by_token = self.get_all_samples_by_token(token_id)
         # ? What if num_samples < len(all_idx_by_token)??
-        #  A possible solution: use the min() between the two
-        assert num_samples <= all_idx_by_token.shape[0]
-        rand_idx_by_token = all_idx_by_token[torch.randperm(len(all_idx_by_token))[:num_samples]]
+        class_n = all_idx_by_token.size(0)
+        if num_samples < class_n:
+            rand_idx = torch.randperm(class_n, device=all_idx_by_token.device)[:num_samples]
+        else:
+            # Allow repetitions
+            rand_idx = torch.randint(low=0, high=class_n, size=(num_samples,), device=all_idx_by_token.device)
+        rand_idx_by_token = all_idx_by_token[rand_idx]
         return rand_idx_by_token
 
     def get_all_token_ids(self) -> torch.Tensor:
@@ -102,7 +106,7 @@ class DatasetIndexByToken:
         Returns:
             - torch.Tensor input_ids, of shape [M * K, D]
             - torch.Tensor attention_mask of shape [M * K, D]
-            - torch.Tensor next_tokens (IDs) of shape [M]
+            - torch.Tensor next_tokens (IDs) of shape [K]
         """
         # Pick K random classes
         all_classes = self.get_all_token_ids()
@@ -111,7 +115,6 @@ class DatasetIndexByToken:
         all_input_ids, all_attention_masks = [], []
 
         for next_token_id in rand_classes:
-            next_token_str = dataset.tokenizer.batch_decode([[next_token_id.item()]])[0]
             # Pick M random samples of that class
             pag_indexes = self.get_rand_samples_idx_by_token(next_token_id, num_samples=num_samples)
             dataset_idx, token_idx = pag_indexes[:, 0], pag_indexes[:, 1]
@@ -132,6 +135,14 @@ class DatasetIndexByToken:
         ## And that's it!
         # You can pass input_ids and attn_mask to your LLM
         return input_ids, attn_mask, rand_classes
+
+    def to(self, device: torch.device) -> 'DatasetIndexByToken':
+        self.all_token_ids = self.all_token_ids.to(device=device)
+        self.indexes_by_token = [
+            None if tensor is None else tensor.to(device=device)
+            for tensor in self.indexes_by_token
+        ]
+        return self
 
     def create_index(self, config: Config):
         # Go multithread!
@@ -271,13 +282,20 @@ def _main(cfg: Config):
     train_dataset = datamodule.train_dataset
     # index = DatasetIndexByToken()
     # index.create_index(config=cfg)
-    # index.save(cfg.model.output_dir / 'dataset_index_by_token.pt')
-    index = DatasetIndexByToken.from_file(cfg.model.output_dir / 'dataset_index_by_token.pt')
+    # index.save(cfg.dataset.prefix.dataset_index_path)
+    index = DatasetIndexByToken.from_file(cfg.dataset.prefix.dataset_index_path)
 
     # Use it
-    k_classes = 3
-    m_samples_per_class = 2
+    k_classes = cfg.training.pag_classes
+    m_samples_per_class = cfg.training.pag_samples
+    print(f'K = {k_classes} - M = {m_samples_per_class}')
     input_ids, attn_mask, classes = index.get_rand_samples_by_token(train_dataset, k_classes, m_samples_per_class)
+    print(f'input_ids: {input_ids.shape}')
+    print(f'attn_mask: {attn_mask.shape}')
+    print(f'classes: {classes.shape}')
+
+    input_ids = input_ids.view(k_classes, m_samples_per_class, -1)
+    attn_mask = attn_mask.view(k_classes, m_samples_per_class, -1)
 
     for i, next_token_id in enumerate(classes.tolist()):
         print()
@@ -285,8 +303,7 @@ def _main(cfg: Config):
         print(f'"{next_token_str}" -> {next_token_id}')
 
         # Pick M random samples of that class
-        from_i, to_i = i * m_samples_per_class, (i + 1) * m_samples_per_class
-        class_input_ids, class_attn_mask = input_ids[from_i:to_i], attn_mask[from_i:to_i]
+        class_input_ids, class_attn_mask = input_ids[i], attn_mask[i]
 
         # Check the actual strings
         for j in range(len(class_input_ids)):

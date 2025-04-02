@@ -12,6 +12,7 @@ from config import Config, apply_config
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
 from models.pag_hidden_model import PAGHiddenModel
+from utils.index_token_to_dataset_item import DatasetIndexByToken
 
 # Load environment variables
 load_dotenv()
@@ -40,19 +41,16 @@ def train(cfg: Config):
     
     # Create data module
     data_module = LMDataModule(cfg, tokenizer)
+    data_module.prepare_data()
+    data_module.setup()
     
     # Select the appropriate model based on training method
     if cfg.training.method == "base":
         lightning_model = BaseLMModel(model, tokenizer, cfg)
     elif cfg.training.method == "pag-hidden":
-        # Use the HDF5 file with hidden states for the current model and layer
-        hdf5_file_path = f"{cfg.model.output_dir}/hidden_states_layer{cfg.model.hidden_layer_index}.hdf5"
-        
-        if not os.path.exists(hdf5_file_path):
-            logger.error(f"HDF5 file not found at {hdf5_file_path}. Please run hidden_state_collector first.")
-            raise FileNotFoundError(f"HDF5 file not found: {hdf5_file_path}")
-            
-        lightning_model = PAGHiddenModel(model, tokenizer, cfg, hdf5_file_path)
+        # Fetch the index to quickly access samples given the next token
+        dataset_index = DatasetIndexByToken.from_file(cfg.dataset.prefix.dataset_index_path)
+        lightning_model = PAGHiddenModel(model, tokenizer, cfg, dataset_index, data_module.train_dataset)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
     
