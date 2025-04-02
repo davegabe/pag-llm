@@ -10,7 +10,8 @@ training:
   weight_decay: 0.01
   max_seq_length: 512
   method: 'pag-hidden' # 'base', 'pag-hidden'
-  pag_classes: 8
+  pag_classes: 32
+  pag_samples: 2
   lora:
     _target_: config.LoraTConfig
     use_lora: True
@@ -52,6 +53,7 @@ dataset:
     _target_: config.DatasetPrefixConfig
     min_length: 10
     max_length: 33    # It has been observed that all samples have >= 34 tokens
+    dataset_index_path: '${path:checkpoints/finetuned-smollm2/dataset_index_by_token.pt}'
 
 logging:
   _target_: config.LoggingConfig

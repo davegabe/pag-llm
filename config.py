@@ -1,15 +1,14 @@
 """
 Configuration schemas for Hydra files in configs/
 """
+import pathlib
+from dataclasses import dataclass
 from typing import Callable
 
 import hydra
 from hydra.core.config_store import ConfigStore
 from hydra.utils import instantiate
 from omegaconf import OmegaConf, DictConfig, ListConfig
-
-import pathlib
-from dataclasses import dataclass
 
 
 @dataclass
@@ -30,6 +29,7 @@ class TrainingConfig:
     max_seq_length: int
     method: str
     pag_classes: int
+    pag_samples: int
     lora: LoraTConfig
 
 
@@ -44,6 +44,7 @@ class ModelConfig:
 class DatasetPrefixConfig:
     min_length: int
     max_length: int
+    dataset_index_path: pathlib.Path
 
 
 @dataclass
