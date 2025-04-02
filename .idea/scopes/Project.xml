@@ -1,3 +1,3 @@
 <component name="DependencyValidationManager">
-  <scope name="Project" pattern="!ext:*/" />
+  <scope name="Project" pattern="!ext:*/&amp;&amp;!file[pag-llm]:checkpoints/*&amp;&amp;!file[pag-llm]:downloaded_dataset/*&amp;&amp;!file[pag-llm]:wandb/*&amp;&amp;!file[pag-llm]:wandb//*&amp;&amp;!file[pag-llm]:downloaded_dataset//*&amp;&amp;!file[pag-llm]:checkpoints//*" />
 </component>
