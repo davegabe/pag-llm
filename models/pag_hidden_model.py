@@ -49,6 +49,9 @@ class PAGHiddenModel(BaseLMModel):
             num_samples=m,
         )
 
+        pag_input_ids, pag_attn_mask, pag_classes = \
+            map(lambda t: t.to(self.model.device), (pag_input_ids, pag_attn_mask, pag_classes))
+
         # Get, in a single shot, all the hidden states
         with torch.no_grad():
             pag_output = self.model.generate(
