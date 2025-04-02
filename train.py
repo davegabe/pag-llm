@@ -95,7 +95,11 @@ def train(cfg: Config):
     )
     
     # Evaluate model before training
-    trainer.validate(lightning_model, datamodule=data_module)
+    # TIP: you can remove this execution by passing 'training.run_evaluation_before_training=False' as cmd argument
+    # Example:  python train.py training.run_evaluation_before_training=False
+    #           -> and it will be skipped, without always commenting this code line.
+    if cfg.training.run_evaluation_before_training:
+        trainer.validate(lightning_model, datamodule=data_module)
 
     # Train model
     trainer.fit(lightning_model, data_module)

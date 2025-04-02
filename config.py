@@ -31,6 +31,7 @@ class TrainingConfig:
     pag_classes: int
     pag_samples: int
     lora: LoraTConfig
+    run_evaluation_before_training: bool = True
 
 
 @dataclass
