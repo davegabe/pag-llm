@@ -31,10 +31,17 @@ class PAGHiddenModel(BaseLMModel):
     
     def training_step(self, batch: BatchType, batch_idx: int):
         # Forward pass
+        # FIXME: self.model().hidden_states look detached from the outputs.logits graph
         outputs: CausalLMOutputWithPast = self.model(**batch.to_dict(), output_hidden_states=True)
         loss_ce = outputs.loss
-        hidden_states = outputs.hidden_states[self.hidden_layer_index]
+        hidden_states = outputs.hidden_states[self.hidden_layer_index][:, -1, :]
         hidden_states.requires_grad_(True)
+
+        # FIXME: TEST -- remove all of this afterwards
+        print('Our backbone model is of type:', type(self.model.base_model.model))
+        outputs.logits.sum().backward()
+        assert outputs.hidden_states[3].requires_grad
+        assert outputs.hidden_states[3].grad is not None
 
         # Get samples for the next tokens
         #
@@ -67,28 +74,25 @@ class PAGHiddenModel(BaseLMModel):
 
             # We take [:, -1] since the padding is on the left, at the beginning
             assert pag_attn_mask[:, -1].sum() == (k * m), 'Expected to have padding on the left, not on the right!'
-            pag_hidden_states = pag_output.hidden_states[0][self.hidden_layer_index][:, -1].view(k, m, -1)
+            pag_hidden_states = pag_output.hidden_states[0][self.hidden_layer_index][:, -1, :].view(k, m, -1)
 
 
         # For each next token (classes of the PAG loss)
         loss_cos = torch.tensor(0.0, device=self.device)
         # Iterate for each pag_class
         for class_hidden_layer, ground_truth_token in zip(pag_hidden_states, pag_classes):
-            print(f'class_hidden_layer: {class_hidden_layer.shape}')
-            print(f'ground_truth_token: {ground_truth_token.shape}')
-
             # Compute x-x'
             g_batch = hidden_states - class_hidden_layer
-            g_batch_y = ground_truth_token * torch.ones_like(g_batch[:, :, 0],
+            g_batch_y = ground_truth_token * torch.ones_like(g_batch[:, 0],
                                                              dtype=torch.long)  # The right token is only one
 
             # Compute the loss of the batches, with respect to this class
-            print(f'{g_batch.shape=}, {g_batch_y.shape=}, {outputs.logits.shape=}')
-            vocab_size = outputs.logits.size(-1)
+            last_token_logits = outputs.logits[:, -1]
             loss_fixed_class = self.criterion(
-                input=outputs.logits.view(-1, vocab_size),
+                input=last_token_logits,
                 target=g_batch_y.view(-1),
             )
+
             batch_z_grad_fixed_class = torch.autograd.grad(
                 loss_fixed_class,
                 [hidden_states],
