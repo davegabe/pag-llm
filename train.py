@@ -74,15 +74,15 @@ def train(cfg: Config):
     
     # Setup logger
     model_name = cfg.model.pretrained_base.split("/")[-1]
+    run_name = f"{model_name}-{cfg.training.method}"
+    tags = [ model_name, cfg.training.method, cfg.dataset.name ]
+    if cfg.training.method == "pag-hidden":
+        run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
+        tags += [ f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}" ]
     wandb_logger = WandbLogger(
         project="pag-llm",
-        name=f"{model_name}-{cfg.training.method}-{cfg.model.hidden_layer_index}",
-        tags=[
-            model_name,
-            cfg.training.method,
-            f"layer-{cfg.model.hidden_layer_index}",
-            cfg.dataset.name,
-        ],
+        name=run_name,
+        tags=tags,
     )
     
     # Create trainer
