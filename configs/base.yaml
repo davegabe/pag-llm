@@ -11,7 +11,6 @@ training:
   max_seq_length: 512
   method: 'pag-hidden' # 'base', 'pag-hidden'
   pag_classes: 32
-  pag_samples: 2
   lora:
     _target_: config.LoraTConfig
     use_lora: True

@@ -287,7 +287,7 @@ def _main(cfg: Config):
 
     # Use it
     k_classes = cfg.training.pag_classes
-    m_samples_per_class = cfg.training.pag_samples
+    m_samples_per_class = 3
     print(f'K = {k_classes} - M = {m_samples_per_class}')
     input_ids, attn_mask, classes = index.get_rand_samples_by_token(train_dataset, k_classes, m_samples_per_class)
     print(f'input_ids: {input_ids.shape}')

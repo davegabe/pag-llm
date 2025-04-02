@@ -29,7 +29,6 @@ class TrainingConfig:
     max_seq_length: int
     method: str
     pag_classes: int
-    pag_samples: int
     lora: LoraTConfig
 
     # Hyperparameters to give different importance to parts of the loss function

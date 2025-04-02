@@ -24,7 +24,6 @@ class PAGHiddenModel(BaseLMModel):
         self.train_dataset = train_dataset
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes # Number of different next tokens to consider
-        self.pag_samples = config.training.pag_samples  # Number of different samples for each next token considered
         self.criterion = torch.nn.CrossEntropyLoss()
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
@@ -42,7 +41,7 @@ class PAGHiddenModel(BaseLMModel):
         # pag_input_ids: [k * m, T]
         # pag_attn_mask: [k * m, T]
         # pag_classes:   [k]
-        k, m = self.pag_classes, self.pag_samples
+        k, m = self.pag_classes, batch.input_ids.size(0)
         pag_input_ids, pag_attn_mask, pag_classes = self.dataset_index.get_rand_samples_by_token(
             dataset=self.train_dataset,
             k_classes=k,
