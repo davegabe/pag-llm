@@ -31,17 +31,12 @@ class PAGHiddenModel(BaseLMModel):
     
     def training_step(self, batch: BatchType, batch_idx: int):
         # Forward pass
-        # FIXME: self.model().hidden_states look detached from the outputs.logits graph
         outputs: CausalLMOutputWithPast = self.model(**batch.to_dict(), output_hidden_states=True)
-        loss_ce = outputs.loss
-        hidden_states = outputs.hidden_states[self.hidden_layer_index][:, -1, :]
-        hidden_states.requires_grad_(True)
 
-        # FIXME: TEST -- remove all of this afterwards
-        print('Our backbone model is of type:', type(self.model.base_model.model))
-        outputs.logits.sum().backward()
-        assert outputs.hidden_states[3].requires_grad
-        assert outputs.hidden_states[3].grad is not None
+        loss_ce = outputs.loss
+        all_layers_hidden_states = outputs.hidden_states[self.hidden_layer_index]
+        all_layers_hidden_states.requires_grad_(True)
+        all_layers_hidden_states.retain_grad()
 
         # Get samples for the next tokens
         #
@@ -82,12 +77,14 @@ class PAGHiddenModel(BaseLMModel):
         # Iterate for each pag_class
         for class_hidden_layer, ground_truth_token in zip(pag_hidden_states, pag_classes):
             # Compute x-x'
-            g_batch = hidden_states - class_hidden_layer
-            g_batch_y = ground_truth_token * torch.ones_like(g_batch[:, 0],
-                                                             dtype=torch.long)  # The right token is only one
+            with torch.no_grad():
+                g_batch = all_layers_hidden_states[:, -1, :] - class_hidden_layer
+                g_batch_y = ground_truth_token * torch.ones_like(g_batch[:, 0],
+                                                                 dtype=torch.long)  # The right token is only one
 
             # Compute the loss of the batches, with respect to this class
             last_token_logits = outputs.logits[:, -1]
+
             loss_fixed_class = self.criterion(
                 input=last_token_logits,
                 target=g_batch_y.view(-1),
@@ -95,9 +92,9 @@ class PAGHiddenModel(BaseLMModel):
 
             batch_z_grad_fixed_class = torch.autograd.grad(
                 loss_fixed_class,
-                [hidden_states],
+                [all_layers_hidden_states],
                 create_graph=True
-            )[0]
+            )[0][:, -1, :]
             
             # Compute the L_cos between grads of batch_z and g_y(batch_z)
             class_loss_cos = F.cosine_similarity(batch_z_grad_fixed_class, g_batch)
