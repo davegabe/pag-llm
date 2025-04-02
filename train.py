@@ -23,6 +23,11 @@ logger = logging.getLogger(__name__)
 
 @apply_config()
 def train(cfg: Config):
+    # Sanity check on WANDB environment variables
+    wandb_api_key = os.environ.get("WANDB_API_KEY", "")
+    if not wandb_api_key:
+        raise Exception("WANDB_API_KEY environment variable is not set")
+
     # Create output directory
     os.makedirs(cfg.model.output_dir, exist_ok=True)
     
