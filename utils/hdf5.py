@@ -30,6 +30,7 @@ def _initialize_hdf5_datasets(
     f.attrs['total_samples'] = 0
 
     if 'created_timestamp' not in f.attrs:
+        # noinspection PyDeprecation
         f.attrs['created_timestamp'] = datetime.datetime.utcnow().isoformat()
 
     # Create resizable datasets with optimized chunking for sample-wise access
@@ -164,6 +165,7 @@ def save_hidden_states_to_hdf5(
 
             # Update metadata
             f.attrs['total_samples'] = new_size
+            # noinspection PyDeprecation
             f.attrs['last_updated'] = datetime.datetime.utcnow().isoformat()
 
             return new_size
