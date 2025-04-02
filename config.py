@@ -31,6 +31,11 @@ class TrainingConfig:
     pag_classes: int
     pag_samples: int
     lora: LoraTConfig
+
+    # Hyperparameters to give different importance to parts of the loss function
+    lambda_loss_ce: float
+    lambda_loss_pag: float
+
     run_evaluation_before_training: bool = True
 
 

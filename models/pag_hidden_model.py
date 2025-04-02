@@ -26,6 +26,8 @@ class PAGHiddenModel(BaseLMModel):
         self.pag_classes = config.training.pag_classes # Number of different next tokens to consider
         self.pag_samples = config.training.pag_samples  # Number of different samples for each next token considered
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.lambda_loss_ce = config.training.lambda_loss_ce
+        self.lambda_loss_pag = config.training.lambda_loss_pag
 
     
     def training_step(self, batch: BatchType, batch_idx: int):
@@ -101,8 +103,7 @@ class PAGHiddenModel(BaseLMModel):
         # Average the cosine similarity loss
         loss_cos /= pag_classes.size(0)
 
-        # TODO: in the final loss, add some lambda hyperparameters!
-        loss = loss_ce + loss_cos
+        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_cos
 
         self.log(
             "train/loss",

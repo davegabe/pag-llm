@@ -17,6 +17,9 @@ training:
     use_lora: True
     lora_rank: 8
     lora_dropout: 0.1
+  # Hyperparameters to give different importance to parts of the loss function
+  lambda_loss_ce: 0.5
+  lambda_loss_pag: 2.0
 
 model:
   _target_: config.ModelConfig
