@@ -132,8 +132,11 @@ def visualize_token_distribution(file_path: str, tokenizer, top_n: int = 20):
     counts = [t[1] for t in common_tokens]
 
     # Convert token IDs to strings and explicitly show \n characters
+    decoded_tokens = [
+        tokenizer.decode([t]).replace(chr(10), '\n') for t in token_ids
+    ]
     token_ids = [
-        f"'{tokenizer.decode([t]).replace(chr(10), '\\n')}'\n({t})" for t in token_ids
+        f"'{d}'\n({t})" for d, t in zip(decoded_tokens, token_ids)
     ]
 
     # Set font size
