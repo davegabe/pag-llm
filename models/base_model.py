@@ -3,7 +3,7 @@ import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, get_linear_schedule_with_warmup
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from config import Config
+from config import LLMPagConfig
 from data.data_processor import BatchType
 
 
@@ -12,7 +12,7 @@ class BaseLMModel(pl.LightningModule):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
-        config: Config
+            config: LLMPagConfig
     ):
         super().__init__()
         self.model = model

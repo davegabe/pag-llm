@@ -1,4 +1,4 @@
-_target_: config.Config
+_target_: config.LLMPagConfig
 
 training:
   _target_: config.TrainingConfig

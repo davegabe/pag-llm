@@ -8,7 +8,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
 import models.loader as loader
-from config import Config, apply_config
+from config import LLMPagConfig, apply_config
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
 from models.pag_hidden_model import PAGHiddenModel
@@ -22,7 +22,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @apply_config()
-def train(cfg: Config):
+def train(cfg: LLMPagConfig):
     # Sanity check on WANDB environment variables
     wandb_api_key = os.environ.get("WANDB_API_KEY", "")
     if not wandb_api_key:

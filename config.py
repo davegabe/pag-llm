@@ -83,7 +83,7 @@ class LoggingConfig:
 
 
 @dataclass
-class Config:
+class LLMPagConfig:
     training: TrainingConfig
     model: ModelConfig
     dataset: DatasetConfig
@@ -95,10 +95,10 @@ OmegaConf.register_new_resolver("path", pathlib.Path)
 
 # Register configs with Hydra
 cs = ConfigStore.instance()
-cs.store(name="config_schema", node=Config)
+cs.store(name="config_schema", node=LLMPagConfig)
 
 
-def apply_config(config_name: str = 'base') -> Callable[[Callable[[Config], None]], None]:
+def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None]], None]:
     """
     Decorator FACTORY for main() to apply the Hydra configuration automatically.
 
@@ -109,7 +109,7 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[Config], None
         The actual decorator.
     """
 
-    def decorator(main_func: Callable[[Config], None]) -> None:
+    def decorator(main_func: Callable[[LLMPagConfig], None]) -> None:
         """
         Actual decorator function to apply the Hydra configuration.
 

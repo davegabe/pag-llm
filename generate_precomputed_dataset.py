@@ -10,7 +10,7 @@ from transformers import GenerationConfig
 from transformers.generation import GenerateDecoderOnlyOutput
 
 import models.loader as loader
-from config import Config, apply_config
+from config import LLMPagConfig, apply_config
 from data.data_module import LMDataModule
 from data.data_processor import BatchType
 from utils.hdf5 import save_hidden_states_to_hdf5
@@ -67,7 +67,7 @@ def process_batch(
     pad_token_id: int,
         batch: BatchType,
     device: torch.device,
-    cfg: Config,
+        cfg: LLMPagConfig,
     output_file: str,
     current_batch_idx: int
 ) -> int:
@@ -128,7 +128,7 @@ def process_batch(
 
 @apply_config()
 @torch.no_grad()
-def main(cfg: Config):
+def main(cfg: LLMPagConfig):
     """
     Main function to generate and save hidden states from model prefixes.
 

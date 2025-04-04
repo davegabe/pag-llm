@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 import models.loader as loader
-from config import Config, apply_config
+from config import LLMPagConfig, apply_config
 from utils.hdf5 import get_hidden_states_by_next_token, get_count_by_next_token
 
 
@@ -158,7 +158,7 @@ def visualize_token_distribution(file_path: str, tokenizer, top_n: int = 20):
 
 
 @apply_config()
-def main(cfg: Config) -> None:
+def main(cfg: LLMPagConfig) -> None:
     """
     Main function for querying and analyzing hidden states.
     

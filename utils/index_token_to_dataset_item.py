@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import torch
 from tqdm import tqdm
 
-from config import DatasetPrefixConfig, apply_config, Config
+from config import DatasetPrefixConfig, apply_config, LLMPagConfig
 from data.data_module import LMDataModule
 from data.data_processor import BatchType, TextDataset
 from models import loader
@@ -144,7 +144,7 @@ class DatasetIndexByToken:
         ]
         return self
 
-    def create_index(self, config: Config):
+    def create_index(self, config: LLMPagConfig):
         # Go multithread!
         cpus = max(multiprocessing.cpu_count() - 2, 1)
         self.logger.info(f'Creating dataset prefix index, using {cpus} CPUs')
@@ -223,7 +223,7 @@ class DatasetIndexByToken:
         self.all_token_ids = torch.tensor(all_tokens, dtype=torch.uint16)
 
     @staticmethod
-    def _create_index(app_cfg: Config, from_i: int, to_i: int, output_file: str):
+    def _create_index(app_cfg: LLMPagConfig, from_i: int, to_i: int, output_file: str):
         import os
         os.environ['TOKENIZERS_PARALLELISM'] = 'false'
 
@@ -271,7 +271,7 @@ class DatasetIndexByToken:
 
 
 @apply_config()
-def _main(cfg: Config):
+def _main(cfg: LLMPagConfig):
     import os
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
     _, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base, lora_config=None)

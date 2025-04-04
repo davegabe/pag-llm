@@ -3,7 +3,7 @@ import pathlib
 import torch
 
 import models.loader as loader
-from config import Config, apply_config
+from config import LLMPagConfig, apply_config
 
 
 def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_length: int = 50) -> str:
@@ -46,7 +46,7 @@ def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_lengt
 
 
 @apply_config()
-def main(cfg: Config):
+def main(cfg: LLMPagConfig):
     # Check if checkpoints directory exists
     model_path: str | pathlib.Path
     if cfg.model.output_dir.exists():

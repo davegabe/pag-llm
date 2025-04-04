@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from transformers import PreTrainedModel, PreTrainedTokenizerFast, GenerationConfig
 from transformers.modeling_outputs import CausalLMOutputWithPast
 
-from config import Config
+from config import LLMPagConfig
 from data.data_processor import BatchType, TextDataset
 from models.base_model import BaseLMModel
 from utils.index_token_to_dataset_item import DatasetIndexByToken
@@ -15,7 +15,7 @@ class PAGHiddenModel(BaseLMModel):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
-        config: Config,
+            config: LLMPagConfig,
             dataset_index: DatasetIndexByToken,
             train_dataset: TextDataset,
     ):

@@ -4,12 +4,12 @@ import lightning as pl
 from torch.utils.data import DataLoader
 from transformers import PreTrainedTokenizerFast
 
-from config import Config
+from config import LLMPagConfig
 from data.data_processor import load_and_process_dataset, download_files
 
 
 class LMDataModule(pl.LightningDataModule):
-    def __init__(self, config: Config, tokenizer: PreTrainedTokenizerFast):
+    def __init__(self, config: LLMPagConfig, tokenizer: PreTrainedTokenizerFast):
         super().__init__()
         self.config = config
         self.tokenizer = tokenizer
