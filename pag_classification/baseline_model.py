@@ -4,7 +4,6 @@ import torch
 import torch.nn.functional as F
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
-from transformers import get_linear_schedule_with_warmup
 
 from config import SentenceClassificationConfig
 from pag_classification.embeddings_classifier import EmbeddingClassifier
@@ -26,18 +25,18 @@ class BaselineClassifier(LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.AdamW(self.classifier.parameters(), lr=self.lr)
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=100,
-            num_training_steps=self.trainer.estimated_stepping_batches,
-        )
+        # scheduler = get_linear_schedule_with_warmup(
+        #     optimizer,
+        #     num_warmup_steps=100,
+        #     num_training_steps=self.trainer.estimated_stepping_batches,
+        # )
 
         return {
             'optimizer': optimizer,
-            'lr_scheduler': {
-                'scheduler': scheduler,
-                'interval': 'step',
-            },
+            # 'lr_scheduler': {
+            #     'scheduler': scheduler,
+            #     'interval': 'step',
+            # },
         }
 
     def predict_batch(self, batch: BatchType) -> PredictionOutput:
