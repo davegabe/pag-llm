@@ -1,0 +1,33 @@
+import torch
+import torch.nn as nn
+
+
+class EmbeddingClassifier(nn.Module):
+    def __init__(self, embedding_dim: int):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+
+        self.classifier = nn.Sequential(
+            nn.Dropout(0.05),
+            nn.Linear(embedding_dim, 384),
+            nn.LayerNorm(384),
+            nn.LeakyReLU(),
+
+            nn.Dropout(0.05),
+            nn.Linear(384, 128),
+            nn.LayerNorm(128),
+            nn.LeakyReLU(),
+
+            nn.Dropout(0.05),
+            nn.Linear(128, 2),
+        )
+
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.kaiming_normal_(module.weight)
+
+    def forward(self, sentence_embedding: torch.Tensor) -> torch.Tensor:
+        return self.classifier(sentence_embedding)

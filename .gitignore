@@ -1,6 +1,7 @@
 *.pyc
 checkpoints/
 outputs/
+lightning_logs/
 downloaded_dataset/
 .env
 .venv/

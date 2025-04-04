@@ -98,6 +98,18 @@ cs = ConfigStore.instance()
 cs.store(name="config_schema", node=LLMPagConfig)
 
 
+@dataclass
+class SentenceClassificationConfig:
+    backbone_model: str
+    embedding_dim: int
+    learning_rate: int
+    batch_size: int
+    output_dir: pathlib.Path
+    sentences_dataset: str
+    config_to_train: str
+    epochs: int
+
+
 def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None]], None]:
     """
     Decorator FACTORY for main() to apply the Hydra configuration automatically.

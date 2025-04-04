@@ -1,0 +1,9 @@
+_target_: config.SentenceClassificationConfig
+backbone_model: 'google-bert/bert-base-multilingual-cased'
+embedding_dim: 768
+output_dir: '${path:checkpoints/sentence-classification}'
+learning_rate: 0.0001  # 1e-4
+batch_size: 64
+epochs: 25
+sentences_dataset: 'stanfordnlp/imdb'
+config_to_train: 'baseline'
