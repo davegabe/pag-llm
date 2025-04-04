@@ -108,6 +108,8 @@ class SentenceClassificationConfig:
     sentences_dataset: str
     config_to_train: str
     epochs: int
+    lambda_pag: float
+    lambda_ce: float
 
 
 def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None]], None]:

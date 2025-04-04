@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
+from transformers import get_linear_schedule_with_warmup
 
 from config import SentenceClassificationConfig
 from pag_classification.embeddings_classifier import EmbeddingClassifier
@@ -24,7 +25,20 @@ class BaselineClassifier(LightningModule):
         self.lr = config.learning_rate
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        return torch.optim.Adam(self.classifier.parameters(), lr=self.lr)
+        optimizer = torch.optim.AdamW(self.classifier.parameters(), lr=self.lr)
+        scheduler = get_linear_schedule_with_warmup(
+            optimizer,
+            num_warmup_steps=100,
+            num_training_steps=self.trainer.estimated_stepping_batches,
+        )
+
+        return {
+            'optimizer': optimizer,
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'step',
+            },
+        }
 
     def predict_batch(self, batch: BatchType) -> PredictionOutput:
         x_embed, y_true = batch['embedding'], batch['label']
@@ -38,9 +52,8 @@ class BaselineClassifier(LightningModule):
         loss = F.cross_entropy(output, y_true)
         self.log(f'{prefix_tag}/loss', loss, prog_bar=True, logger=True)
 
-        if prefix_tag != 'train':
-            accuracy = (y_pred == y_true).float().mean()
-            self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True)
+        accuracy = (y_pred == y_true).float().mean()
+        self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True)
 
         return loss
 

@@ -8,17 +8,18 @@ class EmbeddingClassifier(nn.Module):
         self.embedding_dim = embedding_dim
 
         self.classifier = nn.Sequential(
-            nn.Dropout(0.05),
             nn.Linear(embedding_dim, 384),
             nn.LayerNorm(384),
             nn.LeakyReLU(),
 
-            nn.Dropout(0.05),
+            nn.Linear(384, 384),
+            nn.LayerNorm(384),
+            nn.LeakyReLU(),
+
             nn.Linear(384, 128),
             nn.LayerNorm(128),
             nn.LeakyReLU(),
 
-            nn.Dropout(0.05),
             nn.Linear(128, 2),
         )
 
