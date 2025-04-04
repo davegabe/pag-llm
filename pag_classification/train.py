@@ -3,6 +3,7 @@ from lightning import LightningModule, Trainer
 from config import apply_config, SentenceClassificationConfig
 from pag_classification.baseline_model import BaselineClassifier
 from pag_classification.embeddings_datamodule import SentenceEmbeddingsDataModule
+from pag_classification.pag_identity_model import PagIdentityClassifier
 from pag_classification.pag_score_model import PagScoreClassifier
 
 
@@ -19,6 +20,8 @@ def main(cfg: SentenceClassificationConfig):
         model = BaselineClassifier(cfg)
     elif model_name == 'pag-score':
         model = PagScoreClassifier(cfg, datamodule.train_dataset)
+    elif model_name == 'pag-identity':
+        model = PagIdentityClassifier(cfg)
     else:
         raise ValueError(f'Unknown model configuration to train {model_name}')
 
