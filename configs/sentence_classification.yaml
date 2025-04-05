@@ -3,11 +3,14 @@ backbone_model: 'google-bert/bert-base-multilingual-cased'
 embedding_dim: 768
 output_dir: '${path:checkpoints/sentence-classification}'
 
-learning_rate: 0.0001  # 1e-4
+learning_rate: 0.0001
 batch_size: 256
 sentences_dataset: 'stanfordnlp/imdb'
 
-config_to_train: 'pag-score' # 'baseline'
-epochs: 200
+resume_training: False
+
+config_to_train: 'pag-score-similar-features'  # See all possible values in train.py
+epochs: 100
 lambda_pag: 2.0
 lambda_ce: 0.5
+pag_samples_per_class: 24

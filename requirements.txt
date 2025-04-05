@@ -13,3 +13,5 @@ wandb>=0.19.8
 lightning>=2.5.1
 python-dotenv>=1.1.0
 peft>=0.15.1
+autoattack @ git+https://github.com/fra31/auto-attack@a392200
+scikit-learn>=1.6.1

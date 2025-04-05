@@ -110,6 +110,29 @@ class SentenceClassificationConfig:
     epochs: int
     lambda_pag: float
     lambda_ce: float
+    pag_samples_per_class: int
+    resume_training: bool
+
+
+def get_config(config_name: str = 'base'):
+    """
+    Get the configuration object from the YAML file.
+
+    Args:
+        config_name: (str) Name of the configuration file, inside the configs/ folder
+
+    Returns:
+        The configuration object.
+    """
+    # Initialize Hydra and load the config
+    with hydra.initialize(version_base=None, config_path='configs'):
+        cfg = hydra.compose(config_name=config_name)
+
+    # Instantiate all the classes
+    config = instantiate(cfg)
+    _require_no_dict_config(config)
+
+    return config
 
 
 def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None]], None]:
@@ -138,32 +161,6 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig]
             config = instantiate(hydra_dict_config)
 
             # Check that there are no more DictConfig
-            def _require_no_dict_config(obj, depth=4):
-                """
-                Check that no DictConfig is used in the final object.
-
-                This often causes LOTS of very subtle problems.
-                For instance, load_dataset takes data_files, which can be a dict.
-                So it is pretty natural to add a dictionary to the YAML file.
-
-                Then, you take the config object.
-                But config.data_files is NOT a dict, being a DictConfig object instead.
-                This causes load_dataset NOT to work anymore, with a non-interpretable error.
-                Also, if you print config.data_files to double-check, it LOOKS LIKE a real dict, while it is not!
-
-                Args:
-                    obj: Object to be checked not to have DictConfig fields, recursively.
-                    depth: Depth of the recursion.
-                """
-                assert not isinstance(obj, DictConfig), 'Found a residual of DictConfig in the Hydra config file'
-                assert not isinstance(obj, ListConfig), 'Found a residual of ListConfig in the Hydra config file'
-
-                if depth == 0:
-                    return
-                for k in dir(obj):
-                    if k[0] != '_':
-                        v = getattr(obj, k)
-                        _require_no_dict_config(v, depth=depth-1)
             _require_no_dict_config(config)
 
             main_func(config)
@@ -171,3 +168,31 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig]
         return hydra.main(version_base=None, config_path='configs', config_name=config_name)(_main_wrapper)
 
     return decorator
+
+
+def _require_no_dict_config(obj, depth=4):
+    """
+    Check that no DictConfig is used in the final object.
+
+    This often causes LOTS of very subtle problems.
+    For instance, load_dataset takes data_files, which can be a dict.
+    So it is pretty natural to add a dictionary to the YAML file.
+
+    Then, you take the config object.
+    But config.data_files is NOT a dict, being a DictConfig object instead.
+    This causes load_dataset NOT to work anymore, with a non-interpretable error.
+    Also, if you print config.data_files to double-check, it LOOKS LIKE a real dict, while it is not!
+
+    Args:
+        obj: Object to be checked not to have DictConfig fields, recursively.
+        depth: Depth of the recursion.
+    """
+    assert not isinstance(obj, DictConfig), 'Found a residual of DictConfig in the Hydra config file'
+    assert not isinstance(obj, ListConfig), 'Found a residual of ListConfig in the Hydra config file'
+
+    if depth == 0:
+        return
+    for k in dir(obj):
+        if k[0] != '_':
+            v = getattr(obj, k)
+            _require_no_dict_config(v, depth=depth - 1)

@@ -17,6 +17,10 @@ class PagIdentityClassifier(BaselineClassifier):
         x_embed, y_true = batch['embedding'], batch['label']
 
         with torch.inference_mode(False):  # Enable gradients again, even in validation or test mode
+            if x_embed.is_inference():
+                x_embed = x_embed.clone()
+            if y_true.is_inference():
+                y_true = y_true.clone()
             x_embed.requires_grad_(True)
             x_embed.retain_grad()
 
@@ -39,7 +43,7 @@ class PagIdentityClassifier(BaselineClassifier):
         self.log(f'{prefix_tag}/loss_pag', loss_pag, prog_bar=True)
 
         accuracy = (y_pred == y_true).float().mean()
-        self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True, prog_bar=True, on_step=False)
+        self.log(f'{prefix_tag}/accuracy', accuracy, on_epoch=True, prog_bar=True, on_step=False)
 
         return loss
 

@@ -18,17 +18,21 @@ class PredictionOutput(NamedTuple):
 
 
 class BaselineClassifier(LightningModule):
-    def __init__(self, config: SentenceClassificationConfig):
+    def __init__(self, cfg: SentenceClassificationConfig):
         super().__init__()
-        self.classifier = EmbeddingClassifier(config.embedding_dim)
-        self.lr = config.learning_rate
+        self.classifier = EmbeddingClassifier(cfg.embedding_dim)
+        self.lr = cfg.learning_rate
+        self.save_hyperparameters(ignore=['classifier'])
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
-        optimizer = torch.optim.AdamW(self.classifier.parameters(), lr=self.lr)
-        # scheduler = get_linear_schedule_with_warmup(
+        optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.lr)
+        # scheduler = ReduceLROnPlateau(
         #     optimizer,
-        #     num_warmup_steps=100,
-        #     num_training_steps=self.trainer.estimated_stepping_batches,
+        #     mode='min',
+        #     factor=0.5,
+        #     patience=5,
+        #     threshold=1e-4,
+        #     min_lr=1e-5,
         # )
 
         return {
@@ -36,8 +40,15 @@ class BaselineClassifier(LightningModule):
             # 'lr_scheduler': {
             #     'scheduler': scheduler,
             #     'interval': 'step',
+            #     'monitor': 'train/loss',
             # },
         }
+
+    def forward(self, batch: BatchType | torch.Tensor):
+        if not isinstance(batch, torch.Tensor):
+            batch = batch['embedding']
+        return self.classifier(batch)
+
 
     def predict_batch(self, batch: BatchType) -> PredictionOutput:
         x_embed, y_true = batch['embedding'], batch['label']
@@ -52,7 +63,7 @@ class BaselineClassifier(LightningModule):
         self.log(f'{prefix_tag}/loss', loss, prog_bar=True, logger=True)
 
         accuracy = (y_pred == y_true).float().mean()
-        self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True)
+        self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True, prog_bar=True, on_step=False)
 
         return loss
 
