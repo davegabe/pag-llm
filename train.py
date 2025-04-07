@@ -80,7 +80,8 @@ def train(cfg: LLMPagConfig):
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [ f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}" ]
     wandb_logger = WandbLogger(
-        project="pag-llm",
+        entity='pag-llm-team',
+        project='pag-llm',
         name=run_name,
         tags=tags,
     )

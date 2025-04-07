@@ -46,7 +46,7 @@ def main(cfg: SentenceClassificationConfig):
                                           filename=output_name)
 
     wandb_logger = WandbLogger(entity='pag-llm-team',
-                               project='pag-llm',
+                               project='sentence-classification',
                                name=output_name,
                                log_model=True)
     trainer = Trainer(logger=wandb_logger,
