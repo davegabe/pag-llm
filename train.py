@@ -11,6 +11,7 @@ import models.loader as loader
 from config import LLMPagConfig, apply_config
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
+from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
 from models.pag_hidden_model import PAGHiddenModel
 from utils.index_token_to_dataset_item import DatasetIndexByToken
 
@@ -56,12 +57,14 @@ def train(cfg: LLMPagConfig):
         # Fetch the index to quickly access samples given the next token
         dataset_index = DatasetIndexByToken.from_file(cfg.dataset.prefix.dataset_index_path)
         lightning_model = PAGHiddenModel(model, tokenizer, cfg, dataset_index, data_module.train_dataset)
+    elif cfg.training.method == "pag-identity-embeddings":
+        lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
     
     # Setup callbacks
     checkpoint_callback = ModelCheckpoint(
-        dirpath=cfg.model.output_dir,
+        dirpath=cfg.model.output_dir / cfg.training.method,
         filename="model-{step}",
         save_top_k=5,
         verbose=True,
@@ -79,6 +82,7 @@ def train(cfg: LLMPagConfig):
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [ f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}" ]
+
     wandb_logger = WandbLogger(
         entity='pag-llm-team',
         project='pag-llm',
