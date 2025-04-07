@@ -102,6 +102,7 @@ cs.store(name="config_schema", node=LLMPagConfig)
 class SentenceClassificationConfig:
     backbone_model: str
     embedding_dim: int
+    output_features: int
     learning_rate: int
     batch_size: int
     output_dir: pathlib.Path

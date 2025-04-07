@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class EmbeddingClassifier(nn.Module):
-    def __init__(self, embedding_dim: int):
+    def __init__(self, embedding_dim: int, out_dim: int):
         super().__init__()
         self.embedding_dim = embedding_dim
 
@@ -16,7 +16,7 @@ class EmbeddingClassifier(nn.Module):
             nn.LayerNorm(128),
             nn.ReLU(),
 
-            nn.Linear(128, 2),
+            nn.Linear(128, out_dim),
         )
 
         self._init_weights()

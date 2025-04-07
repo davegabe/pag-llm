@@ -1,6 +1,7 @@
 _target_: config.SentenceClassificationConfig
 backbone_model: 'google-bert/bert-base-multilingual-cased'
 embedding_dim: 768
+output_features: 2
 output_dir: '${path:checkpoints/sentence-classification}'
 
 learning_rate: 0.0001
