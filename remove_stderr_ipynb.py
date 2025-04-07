@@ -6,7 +6,6 @@ with open(ipynb_file) as f:
     
 for i in range(len(data['cells'])):
     if 'outputs' in data['cells'][i]:
-        print(i)
         data['cells'][i]['outputs'] = [ o for o in data['cells'][i]['outputs'] if 'name' not in o or o['name'] != 'stderr' ]
         
 with open(ipynb_file, 'w') as f:
