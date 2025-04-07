@@ -29,7 +29,7 @@ def load_model_and_tokenizer(
     # Load the model and tokenizer
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         model_name,
-        device_map='auto',
+        device_map='cuda'
     )
 
     tokenizer = load_tokenizer(model_name)

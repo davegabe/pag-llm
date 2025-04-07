@@ -20,7 +20,7 @@ class PredictionOutput(NamedTuple):
 class BaselineClassifier(LightningModule):
     def __init__(self, cfg: SentenceClassificationConfig):
         super().__init__()
-        self.classifier = EmbeddingClassifier(cfg.embedding_dim)
+        self.classifier = EmbeddingClassifier(cfg.embedding_dim, cfg.num_classes)
         self.lr = cfg.learning_rate
         self.save_hyperparameters(ignore=['classifier'])
 

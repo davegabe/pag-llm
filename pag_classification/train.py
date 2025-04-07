@@ -12,7 +12,7 @@ from pag_classification.pag_identity_model import PagIdentityClassifier
 from pag_classification.pag_score_model import PagScoreSimilarSamplesClassifier, PagScoreSimilarFeaturesClassifier
 
 
-@apply_config('sentence_classification')
+@apply_config('sentence_multiclass_classification')
 def main(cfg: SentenceClassificationConfig):
     print('Loading with config:', cfg)
 

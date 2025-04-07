@@ -12,7 +12,7 @@ from pag_classification.embeddings_datamodule import SentenceEmbeddingsDataModul
 @torch.no_grad()
 def embed_dataset(dataset: torch.utils.data.Dataset, tokenizer: PreTrainedTokenizerFast,
                   embedder_model: PreTrainedModel) -> dict:
-    dataloader = DataLoader(dataset, batch_size=64)
+    dataloader = DataLoader(dataset, batch_size=16)
 
     sentence_to_embedding = dict()
 
@@ -58,7 +58,7 @@ def remove_too_long_sentences(full_dataset, max_length: int) -> torch.utils.data
     return torch.utils.data.Subset(full_dataset, short_enough_idx)
 
 
-@apply_config('sentence_classification')
+@apply_config('sentence_multiclass_classification')
 def main(cfg: SentenceClassificationConfig):
     model, tokenizer = loader.load_model_and_tokenizer(cfg.backbone_model)
 
@@ -81,3 +81,6 @@ def main(cfg: SentenceClassificationConfig):
     test_file = SentenceEmbeddingsDataModule.get_test_split_embeddings_file(cfg)
     test_file.parent.mkdir(parents=True, exist_ok=True)
     torch.save(test_sentence_to_embedding, test_file)
+
+if __name__ == '__main__':
+    main()

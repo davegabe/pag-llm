@@ -1,12 +1,12 @@
 _target_: config.SentenceClassificationConfig
 backbone_model: 'google-bert/bert-base-multilingual-cased'
 embedding_dim: 768
-num_classes: 2
+num_classes: 6
 output_dir: '${path:checkpoints/sentence-classification}'
 
 learning_rate: 0.0001
-batch_size: 256
-sentences_dataset: 'stanfordnlp/imdb'
+batch_size: 1024
+sentences_dataset: 'dair-ai/emotion'
 
 resume_training: False
 
