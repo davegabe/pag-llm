@@ -17,6 +17,7 @@ def main(cfg: SentenceClassificationConfig):
     print('Loading with config:', cfg)
 
     model_name = cfg.config_to_train
+    output_name = cfg.run_name or model_name
 
     datamodule = SentenceEmbeddingsDataModule(cfg)
     datamodule.prepare_data()
@@ -32,21 +33,21 @@ def main(cfg: SentenceClassificationConfig):
     elif model_name == 'pag-identity':
         model = PagIdentityClassifier(cfg)
     else:
-        raise ValueError(f'Unknown model configuration to train {model_name}')
+        raise ValueError(f'Unknown model configuration to train {model_name} (output: {output_name})')
 
     print('Training:', type(model).__name__)
 
-    training_output_dir = cfg.output_dir / f'training_{model_name}'
+    training_output_dir = cfg.output_dir / f'training_{output_name}'
     training_output_dir.mkdir(parents=True, exist_ok=True)
 
     checkpoint_callback = ModelCheckpoint(dirpath=training_output_dir,
                                           save_top_k=1,
                                           monitor="val/loss",
-                                          filename=model_name)
+                                          filename=output_name)
 
     wandb_logger = WandbLogger(entity='pag-llm-team',
                                project='pag-llm',
-                               name=model_name,
+                               name=output_name,
                                log_model=True)
     trainer = Trainer(logger=wandb_logger,
                       max_epochs=cfg.epochs,

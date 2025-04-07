@@ -112,6 +112,7 @@ class SentenceClassificationConfig:
     lambda_ce: float
     pag_samples_per_class: int
     resume_training: bool
+    run_name: str | None = None
 
 
 def get_config(config_name: str = 'base'):
