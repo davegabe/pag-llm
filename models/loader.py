@@ -30,6 +30,7 @@ def load_model_and_tokenizer(
     model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(
         model_name,
         device_map='auto',
+        attn_implementation='eager',
     )
 
     tokenizer = load_tokenizer(model_name)
