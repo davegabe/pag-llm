@@ -129,7 +129,7 @@ class PagScoreClassifier(BaselineClassifier):
             for i in class_indexes
         ])
 
-        return samples_of_class_i
+        return samples_of_class_i.to(self.device)
 
     def _create_classes_dict(self) -> dict[int, torch.Tensor]:
         return {
@@ -176,4 +176,4 @@ class PagScoreSimilarFeaturesClassifier(PagScoreClassifier):
             for i in indexes
         ])
 
-        return samples_of_class_whatever
+        return samples_of_class_whatever.to(self.device)
