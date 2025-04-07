@@ -11,6 +11,6 @@ resume_training: False
 
 config_to_train: 'pag-score-similar-features'  # See all possible values in train.py
 epochs: 100
-lambda_pag: 2.0
+lambda_pag: 5.0
 lambda_ce: 0.5
 pag_samples_per_class: 24
