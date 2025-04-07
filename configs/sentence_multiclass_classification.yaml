@@ -5,13 +5,13 @@ num_classes: 6
 output_dir: '${path:checkpoints/sentence-classification}'
 
 learning_rate: 0.0001
-batch_size: 1024
+batch_size: 256
 sentences_dataset: 'dair-ai/emotion'
 
 resume_training: False
 
-config_to_train: 'pag-score-similar-features'  # See all possible values in train.py
-epochs: 100
+config_to_train: 'baseline'  # See all possible values in train.py
+epochs: 400
 lambda_pag: 5.0
 lambda_ce: 0.5
 pag_samples_per_class: 24

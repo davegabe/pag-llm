@@ -10,7 +10,8 @@ from pag_classification.baseline_model import BaselineClassifier
 from pag_classification.embeddings_datamodule import SentenceEmbeddingsDataModule
 from pag_classification.pag_identity_model import PagIdentityClassifier
 from pag_classification.pag_score_model import PagScoreSimilarSamplesClassifier, PagScoreSimilarFeaturesClassifier
-
+from lightning.pytorch.callbacks import LearningRateFinder
+from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 
 @apply_config('sentence_multiclass_classification')
 def main(cfg: SentenceClassificationConfig):
@@ -44,15 +45,21 @@ def main(cfg: SentenceClassificationConfig):
                                           save_top_k=1,
                                           monitor="val/loss",
                                           filename=output_name)
+    learning_rate_finder = LearningRateFinder(
+        min_lr=1e-8,
+        max_lr=1e-1,
+        num_training_steps=cfg.epochs // 2,
+    )
 
     wandb_logger = WandbLogger(entity='pag-llm-team',
-                               project='sentence-classification',
+                               project='sentence-multi-classification',
                                name=output_name,
                                log_model=True)
     trainer = Trainer(logger=wandb_logger,
                       max_epochs=cfg.epochs,
                       default_root_dir=None if cfg.resume_training else training_output_dir,
-                      callbacks=[checkpoint_callback])
+                      callbacks=[checkpoint_callback, learning_rate_finder],
+    )
 
     last_train_ckpt_file: pathlib.Path | None = None
     if cfg.resume_training:

@@ -4,6 +4,7 @@ import torch
 import torch.nn.functional as F
 from lightning import LightningModule
 from lightning.pytorch.utilities.types import OptimizerLRScheduler
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from config import SentenceClassificationConfig
 from pag_classification.embeddings_classifier import EmbeddingClassifier
@@ -26,22 +27,22 @@ class BaselineClassifier(LightningModule):
 
     def configure_optimizers(self) -> OptimizerLRScheduler:
         optimizer = torch.optim.Adam(self.classifier.parameters(), lr=self.lr)
-        # scheduler = ReduceLROnPlateau(
-        #     optimizer,
-        #     mode='min',
-        #     factor=0.5,
-        #     patience=5,
-        #     threshold=1e-4,
-        #     min_lr=1e-5,
-        # )
+        scheduler = ReduceLROnPlateau(
+            optimizer,
+            mode='min',
+            factor=0.5,
+            patience=5,
+            threshold=1e-4,
+            min_lr=1e-5,
+        )
 
         return {
             'optimizer': optimizer,
-            # 'lr_scheduler': {
-            #     'scheduler': scheduler,
-            #     'interval': 'step',
-            #     'monitor': 'train/loss',
-            # },
+            'lr_scheduler': {
+                'scheduler': scheduler,
+                'interval': 'step',
+                'monitor': 'train/loss',
+            },
         }
 
     def forward(self, batch: BatchType | torch.Tensor):
@@ -64,7 +65,7 @@ class BaselineClassifier(LightningModule):
 
         accuracy = (y_pred == y_true).float().mean()
         self.log(f'{prefix_tag}/accuracy', accuracy.item(), on_epoch=True, prog_bar=True, on_step=False)
-
+        
         return loss
 
     def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
