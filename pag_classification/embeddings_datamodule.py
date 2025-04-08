@@ -14,6 +14,7 @@ SENTENCE_TO_EMBEDDING_TEST_FILENAME = 'test_embeddings.pt'
 class SentenceEmbeddingsDataModule(LightningDataModule):
     train_dataset: SentenceEmbeddingsDataset
     test_dataset: SentenceEmbeddingsDataset
+    val_dataset: SentenceEmbeddingsDataset
 
     def __init__(self, config: SentenceClassificationConfig):
         super().__init__()
@@ -35,6 +36,7 @@ class SentenceEmbeddingsDataModule(LightningDataModule):
         self.test_dataset = SentenceEmbeddingsDataset(
             SentenceEmbeddingsDataModule.get_test_split_embeddings_file(self.config)
         )
+        self.val_dataset = self.test_dataset #! TODO: use a different dataset for validation
 
     def train_dataloader(self) -> DataLoader:
         return DataLoader(

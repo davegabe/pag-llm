@@ -11,7 +11,8 @@ sentences_dataset: 'dair-ai/emotion'
 resume_training: False
 
 config_to_train: 'baseline'  # See all possible values in train.py
+run_name: 'baseline'
 epochs: 400
-lambda_pag: 5.0
-lambda_ce: 0.5
+lambda_pag: 2.0
+lambda_ce: 1.0
 pag_samples_per_class: 24

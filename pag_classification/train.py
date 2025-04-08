@@ -28,7 +28,7 @@ def main(cfg: SentenceClassificationConfig):
     if model_name == 'baseline':
         model = BaselineClassifier(cfg)
     elif model_name == 'pag-score-similar-samples':
-        model = PagScoreSimilarSamplesClassifier(cfg, datamodule.train_dataset)
+        model = PagScoreSimilarSamplesClassifier(cfg)
     elif model_name == 'pag-score-similar-features':
         model = PagScoreSimilarFeaturesClassifier(cfg, datamodule.train_dataset)
     elif model_name == 'pag-identity':
@@ -38,6 +38,8 @@ def main(cfg: SentenceClassificationConfig):
 
     print('Training:', type(model).__name__)
 
+    model.test_dataset = datamodule.test_dataset
+    model.val_dataset = datamodule.val_dataset
     training_output_dir = cfg.output_dir / f'training_{output_name}'
     training_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,14 +53,17 @@ def main(cfg: SentenceClassificationConfig):
         num_training_steps=cfg.epochs // 2,
     )
 
-    wandb_logger = WandbLogger(entity='pag-llm-team',
-                               project='sentence-multi-classification',
-                               name=output_name,
-                               log_model=True)
-    trainer = Trainer(logger=wandb_logger,
-                      max_epochs=cfg.epochs,
-                      default_root_dir=None if cfg.resume_training else training_output_dir,
-                      callbacks=[checkpoint_callback, learning_rate_finder],
+    wandb_logger = WandbLogger(
+        entity='pag-llm-team',
+        project='sentence-multi-classification',
+        name=output_name,
+        log_model=True
+    )
+    trainer = Trainer(
+        logger=wandb_logger,
+        max_epochs=cfg.epochs,
+        default_root_dir=None if cfg.resume_training else training_output_dir,
+        callbacks=[checkpoint_callback, learning_rate_finder]
     )
 
     last_train_ckpt_file: pathlib.Path | None = None
