@@ -132,6 +132,6 @@ class BaselineClassifier(LightningModule):
         if self.current_epoch > 0 and self.current_epoch % 50 == 0:
             self._evaluate_adversarial_robustness('val', self.val_dataset)
     
-    def on_test_epoch_end(self):
-        """Run adversarial evaluation at the end of test epoch"""
-        self._evaluate_adversarial_robustness('test', self.test_dataset)
+    # def on_test_epoch_end(self):
+    #     """Run adversarial evaluation at the end of test epoch"""
+    #     self._evaluate_adversarial_robustness('test', self.test_dataset)

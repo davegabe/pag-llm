@@ -28,7 +28,7 @@ def main(cfg: SentenceClassificationConfig):
     if model_name == 'baseline':
         model = BaselineClassifier(cfg)
     elif model_name == 'pag-score-similar-samples':
-        model = PagScoreSimilarSamplesClassifier(cfg)
+        model = PagScoreSimilarSamplesClassifier(cfg, datamodule.train_dataset)
     elif model_name == 'pag-score-similar-features':
         model = PagScoreSimilarFeaturesClassifier(cfg, datamodule.train_dataset)
     elif model_name == 'pag-identity':
