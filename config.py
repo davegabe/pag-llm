@@ -45,6 +45,21 @@ class ModelConfig:
     hidden_layer_index: int
     random_initialization: bool = False
 
+@dataclass
+class CustomModelConfig:
+    # For building a custom model
+    hidden_size: int
+    intermediate_size: int
+    num_attention_heads: int
+    num_hidden_layers: int
+    num_key_value_heads: int
+    tie_word_embeddings: bool
+    vocab_size: int
+    max_position_embeddings: int
+
+    # Generic model parameters
+    output_dir: pathlib.Path
+    hidden_layer_index: int
 
 @dataclass
 class DatasetPrefixConfig:
@@ -90,6 +105,12 @@ class LLMPagConfig:
     dataset: DatasetConfig
     logging: LoggingConfig
 
+@dataclass
+class CustomLLMPagConfig:
+    training: TrainingConfig
+    model: CustomModelConfig
+    dataset: DatasetConfig
+    logging: LoggingConfig
 
 # Register a custom resolver for paths
 OmegaConf.register_new_resolver("path", pathlib.Path)

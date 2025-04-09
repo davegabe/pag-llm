@@ -1,13 +1,19 @@
 """
 File with loader functions, with our hyperparameters to pass to HuggingFace transformers library.
 """
+import os
 import pathlib
 
 import torch.nn as nn
 from peft import LoraConfig, get_peft_model
-from transformers import PreTrainedModel, PreTrainedTokenizerFast, AutoTokenizer, AutoModelForCausalLM
+from transformers import PreTrainedModel, PreTrainedTokenizerFast, AutoTokenizer, AutoModelForCausalLM, LlamaConfig
+from tokenizers import Tokenizer
+from tokenizers.models import BPE
+from tokenizers.trainers import BpeTrainer
+from tokenizers.pre_tokenizers import Whitespace
 
-from config import LoraTConfig
+from config import CustomModelConfig, DatasetConfig, LoraTConfig
+from datasets import load_dataset
 
 
 def load_model_and_tokenizer(
@@ -70,3 +76,78 @@ def load_tokenizer(model_path_or_name: pathlib.Path | str) -> PreTrainedTokenize
         tokenizer.pad_token = tokenizer.eos_token
 
     return tokenizer
+
+def create_model_and_tokenizer(
+        dataset_cfg: DatasetConfig,
+        model_cfg: CustomModelConfig,
+) -> tuple[PreTrainedModel | nn.Module, PreTrainedTokenizerFast]:
+    """
+    Create a model and tokenizer with the specified parameters.
+
+    Args:
+        dataset_cfg (DatasetConfig): The dataset configuration.
+        model_cfg (CustomModelConfig): The model configuration.
+
+    Returns:
+        tuple: A tuple containing the model and tokenizer.
+    """
+    # Check if the tokenizer already exists
+    if not os.path.exists(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"):
+        # Create a tokenizer and train it
+        print(f"Tokenizer not found at {model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json - creating it")
+        tokenizer = Tokenizer(BPE(unk_token="<unk>"))
+        trainer = BpeTrainer(
+            vocab_size=model_cfg.vocab_size,
+            min_frequency=2,
+            special_tokens=[
+                "<unk>",
+                "<s>",
+                "</s>",
+                "<pad>",
+                "<mask>",
+                "<|endoftext|>" # Since TinyStoriesV2_cleaned dataset has this token
+            ],
+        )
+
+        # Load the dataset
+        dataset = load_dataset(dataset_cfg.name, split="train")
+        def get_training_corpus():
+            for i in range(0, len(dataset), 1000):
+                yield dataset[i : i + 1000]["text"]
+        training_corpus = get_training_corpus()
+
+        # Train the tokenizer
+        tokenizer.pre_tokenizer = Whitespace()
+        tokenizer.train_from_iterator(
+            training_corpus,
+            trainer=trainer
+        )
+
+        # Save the tokenizer
+        tokenizer.save(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json")
+
+    # Load the tokenizer with the trained vocabulary
+    fast_tokenizer = PreTrainedTokenizerFast(
+        tokenizer_file=f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"
+    )
+    fast_tokenizer.pad_token = "<pad>"
+    fast_tokenizer.eos_token = "</s>"
+
+    # Build a model
+    config = LlamaConfig(
+        hidden_size=model_cfg.hidden_size,
+        intermediate_size=model_cfg.intermediate_size,
+        num_attention_heads=model_cfg.num_attention_heads,
+        num_hidden_layers=model_cfg.num_hidden_layers,
+        num_key_value_heads=model_cfg.num_key_value_heads,
+        tie_word_embeddings=model_cfg.tie_word_embeddings,
+        vocab_size=model_cfg.vocab_size,
+        max_position_embeddings=model_cfg.max_position_embeddings,
+        pad_token_id=fast_tokenizer.pad_token_id,
+        bos_token_id=fast_tokenizer.bos_token_id,
+        eos_token_id=fast_tokenizer.eos_token_id,
+        device_map='auto'
+    )
+    model = AutoModelForCausalLM.from_config(config)
+
+    return model, fast_tokenizer

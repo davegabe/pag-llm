@@ -8,7 +8,7 @@ from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
 import models.loader as loader
-from config import LLMPagConfig, apply_config
+from config import CustomLLMPagConfig, LLMPagConfig, apply_config
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
 from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
@@ -39,11 +39,19 @@ def train(cfg: LLMPagConfig):
     torch.set_float32_matmul_precision('medium')
     
     # Load tokenizer and model
-    model, tokenizer = loader.load_model_and_tokenizer(
-        cfg.model.pretrained_base,
-        cfg.model.random_initialization,
-        cfg.training.lora
-    )
+    if type(cfg) == LLMPagConfig:
+        model, tokenizer = loader.load_model_and_tokenizer(
+            cfg.model.pretrained_base,
+            cfg.model.random_initialization,
+            cfg.training.lora
+        )
+        model_name = cfg.model.pretrained_base.split("/")[-1]
+    elif type(cfg) == CustomLLMPagConfig:
+        model, tokenizer = loader.create_model_and_tokenizer(
+            cfg.dataset,
+            cfg.model
+        )
+        model_name = str(cfg.model.output_dir).split("/")[-1]
     model.train()
     
     # Create data module
@@ -77,7 +85,6 @@ def train(cfg: LLMPagConfig):
     lr_monitor = LearningRateMonitor(logging_interval="step")
     
     # Setup logger
-    model_name = cfg.model.pretrained_base.split("/")[-1]
     run_name = f"{model_name}-{cfg.training.method}"
     tags = [ model_name, cfg.training.method, cfg.dataset.name ]
     if cfg.training.method == "pag-hidden":

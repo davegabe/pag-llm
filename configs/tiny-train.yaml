@@ -1,4 +1,4 @@
-_target_: config.LLMPagConfig
+_target_: config.CustomLLMPagConfig
 
 training:
   _target_: config.TrainingConfig
@@ -16,20 +16,27 @@ training:
   # Hyperparameters to give different importance to parts of the loss function
   lambda_loss_ce: 1.0
   lambda_loss_pag: 2.0
+  run_evaluation_before_training: True
 
 model:
-  _target_: config.ModelConfig
-  pretrained_base: 'raincandy-u/TinyStories-656K'
-  random_initialization: True
-  output_dir: '${path:checkpoints/tinystories}'
+  _target_: config.CustomModelConfig
   hidden_layer_index: 2
+  hidden_size: 128
+  intermediate_size: 640
+  num_attention_heads: 16
+  num_hidden_layers: 3
+  num_key_value_heads: 4
+  tie_word_embeddings: True
+  vocab_size: 2048
+  max_position_embeddings: 256
+  output_dir: '${path:checkpoints/tinystories}'
 
 dataset:
   _target_: config.DatasetConfig
-  name: 'raincandy-u/TinyStoriesV2_SpecialTokens'
+  name: 'fhswf/TinyStoriesV2_cleaned'
 
   train_split: 'train'
-  eval_split: 'validation'
+  eval_split: 'test' # 'validation' is not available in the dataset
   num_workers: 3
   prefix:
     _target_: config.DatasetPrefixConfig
