@@ -60,7 +60,10 @@ def remove_too_long_sentences(full_dataset, max_length: int) -> torch.utils.data
 
 @apply_config('sentence_classification')
 def main(cfg: SentenceClassificationConfig):
-    model, tokenizer = loader.load_model_and_tokenizer(cfg.backbone_model)
+    model, tokenizer = loader.load_model_and_tokenizer(
+        cfg.backbone_model,
+        random_initialization=False,
+    )
 
     # Load the full dataset
     full_sentences_dataset = load_dataset(cfg.sentences_dataset).with_format('torch')

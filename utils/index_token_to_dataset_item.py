@@ -274,7 +274,11 @@ class DatasetIndexByToken:
 def _main(cfg: LLMPagConfig):
     import os
     os.environ['TOKENIZERS_PARALLELISM'] = 'false'
-    _, tokenizer = loader.load_model_and_tokenizer(cfg.model.pretrained_base, lora_config=None)
+    _, tokenizer = loader.load_model_and_tokenizer(
+        cfg.model.pretrained_base,
+        random_initialization=False,
+        lora_config=None
+    )
 
     datamodule = LMDataModule(cfg, tokenizer)
     datamodule.prepare_data()

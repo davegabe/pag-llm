@@ -41,6 +41,7 @@ def train(cfg: LLMPagConfig):
     # Load tokenizer and model
     model, tokenizer = loader.load_model_and_tokenizer(
         cfg.model.pretrained_base,
+        cfg.model.random_initialization,
         cfg.training.lora
     )
     model.train()

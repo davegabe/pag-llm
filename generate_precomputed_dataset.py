@@ -144,6 +144,7 @@ def main(cfg: LLMPagConfig):
     # Load model and tokenizer
     model, tokenizer = loader.load_model_and_tokenizer(
         cfg.model.pretrained_base,
+        cfg.model.random_initialization,
         lora_config=cfg.training.lora,
     )
     model.to(device)

@@ -18,10 +18,12 @@ class LMDataModule(pl.LightningDataModule):
     
     def prepare_data(self):
         """Download data files if needed. This method is called only once on rank 0."""
-        download_files(
-            self.config.dataset.files_to_download,
-            destination_dir=pathlib.Path('./downloaded_dataset')
-        )
+        if self.config.dataset.files_to_download:
+            # Download files if needed
+            download_files(
+                self.config.dataset.files_to_download,
+                destination_dir=pathlib.Path('./downloaded_dataset')
+            )
     
     def setup(self, stage=None):
         """Load datasets"""

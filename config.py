@@ -13,9 +13,9 @@ from omegaconf import OmegaConf, DictConfig, ListConfig
 
 @dataclass
 class LoraTConfig:
-    use_lora: bool
-    lora_rank: int
-    lora_dropout: float
+    use_lora: bool = False
+    lora_rank: int = 8
+    lora_dropout: float = 0.1
 
 
 @dataclass
@@ -43,6 +43,7 @@ class ModelConfig:
     pretrained_base: str
     output_dir: pathlib.Path
     hidden_layer_index: int
+    random_initialization: bool = False
 
 
 @dataclass

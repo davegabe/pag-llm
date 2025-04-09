@@ -12,6 +12,7 @@ from config import LoraTConfig
 
 def load_model_and_tokenizer(
         model_path_or_name: pathlib.Path | str,
+        random_initialization: bool,
         lora_config: LoraTConfig | None = None,
 ) -> tuple[PreTrainedModel | nn.Module, PreTrainedTokenizerFast]:
     """
@@ -34,6 +35,11 @@ def load_model_and_tokenizer(
     )
 
     tokenizer = load_tokenizer(model_name)
+
+    # Load the model with random initialization
+    if random_initialization:
+        print(f"WARN - Loading model with random initialization: {model_name}")
+        model: PreTrainedModel = AutoModelForCausalLM.from_config(model.config)
 
     # Set the model configuration
     if lora_config and lora_config.use_lora:

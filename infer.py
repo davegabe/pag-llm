@@ -19,7 +19,11 @@ def generate_text(model_path_or_name: pathlib.Path | str, prompt: str, max_lengt
         str: The generated text.
     """
     # Load model and tokenizer
-    model, tokenizer = loader.load_model_and_tokenizer(model_path_or_name, lora_config=None)
+    model, tokenizer = loader.load_model_and_tokenizer(
+        model_path_or_name,
+        random_initialization=False,
+        lora_config=None
+    )
 
     # Move model to GPU if available
     device = "cuda" if torch.cuda.is_available() else "cpu"
