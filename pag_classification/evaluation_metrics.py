@@ -92,3 +92,20 @@ def accuracy_fgsm(model: LightningModule, dataset: Dataset, alpha: float) -> tup
     adversarial_accuracy /= len(dataset)
 
     return real_accuracy.item(), adversarial_accuracy.item()
+
+
+@torch.no_grad()
+def get_accuracy(model: LightningModule, dataset: Dataset) -> float:
+    dataloader = DataLoader(dataset, batch_size=256, shuffle=False)
+
+    accuracy = torch.tensor(0.)
+
+    for batch in dataloader:
+        embeddings, labels = batch['embedding'].to(model.device), batch['label'].to(model.device)
+        output = model(embeddings)
+
+        classifications = output.argmax(dim=1)
+        accuracy += (classifications == labels).float().sum().cpu()
+
+    accuracy /= len(dataset)
+    return accuracy.item()
