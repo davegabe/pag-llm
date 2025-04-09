@@ -1,5 +1,5 @@
 _target_: config.SentenceClassificationConfig
-backbone_model: 'google-bert/bert-base-multilingual-cased'
+backbone_model: 'distilbert/distilbert-base-multilingual-cased'
 embedding_dim: 768
 output_features: 2
 output_dir: '${path:checkpoints/sentence-classification}'
@@ -12,6 +12,6 @@ resume_training: False
 
 config_to_train: 'pag-score-similar-features'  # See all possible values in train.py
 epochs: 100
-lambda_pag: 5.0
+lambda_pag: 2.5
 lambda_ce: 0.5
 pag_samples_per_class: 24
