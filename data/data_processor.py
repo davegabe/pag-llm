@@ -23,28 +23,34 @@ class BatchType(collections.abc.Iterable):
     input_ids: torch.Tensor
     attention_mask: torch.Tensor
     labels: torch.Tensor
+    shift_labels: torch.Tensor
 
-    def __init__(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: torch.Tensor):
+    def __init__(self, input_ids: torch.Tensor, attention_mask: torch.Tensor, labels: torch.Tensor,
+                 shift_labels: torch.Tensor):
         self.input_ids = input_ids
         self.attention_mask = attention_mask
         self.labels = labels
+        self.shift_labels = shift_labels
 
     def to(self, device: torch.device) -> 'BatchType':
         self.input_ids = self.input_ids.to(device)
         self.attention_mask = self.attention_mask.to(device)
         self.labels = self.labels.to(device)
+        self.shift_labels = self.shift_labels.to(device)
         return self
 
     def __getitem__(self, batch_index: int) -> 'BatchType':
         return self.__class__(input_ids=self.input_ids[batch_index],
                               attention_mask=self.attention_mask[batch_index],
-                              labels=self.labels[batch_index])
+                              labels=self.labels[batch_index],
+                              shift_labels=self.shift_labels[batch_index])
 
     def to_dict(self) -> dict[str, torch.Tensor]:
         return {
             'input_ids': self.input_ids,
             'attention_mask': self.attention_mask,
             'labels': self.labels,
+            'shift_labels': self.shift_labels,
         }
 
     def __len__(self) -> int:
@@ -57,6 +63,7 @@ class BatchType(collections.abc.Iterable):
         yield self.input_ids
         yield self.attention_mask
         yield self.labels
+        yield self.shift_labels
 
 
 class TextDataset(Dataset):
@@ -121,12 +128,17 @@ class TextDataset(Dataset):
         )
 
         # For causals LM, labels are the same as input_ids, shifted by 1
-        encodings['labels'] = encodings['input_ids'].roll(-1, dims=1)
-        encodings['labels'][:, -1] = 0
+        # However:
+        # - 'labels' should be the same as input_ids
+        # - 'shift_labels' should be the actual shifted labels, output of the lm_head as the next token
+        encodings['labels'] = encodings['input_ids'].clone()
+        encodings['shift_labels'] = encodings['input_ids'].roll(-1, dims=1)
+        encodings['shift_labels'][:, -1] = 0
 
         return BatchType(input_ids=encodings['input_ids'],
                          attention_mask=encodings['attention_mask'],
-                         labels=encodings['labels'])
+                         labels=encodings['labels'],
+                         shift_labels=encodings['shift_labels'])
 
 
 def load_and_process_dataset(
