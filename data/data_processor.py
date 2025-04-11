@@ -167,6 +167,17 @@ def load_and_process_dataset(
         data_files=dataset_config.data_files,
     )
 
+    # Check if the dataset has the specified splits
+    if dataset_config.eval_split not in raw_dataset:
+        # Create custom splits
+        full_samples = raw_dataset[dataset_config.train_split]
+        train_samples = int(len(full_samples) * 0.8)
+
+        # Create Subset
+        raw_dataset[dataset_config.train_split] = Subset(full_samples, range(train_samples))
+        raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, len(full_samples)))
+
+
     # Create training dataset
     train_dataset = TextDataset(
         raw_dataset[dataset_config.train_split],

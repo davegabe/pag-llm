@@ -1,5 +1,4 @@
 import torch
-import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
 tokenizer = AutoTokenizer.from_pretrained("raincandy-u/TinyStories-656K")

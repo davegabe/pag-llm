@@ -39,6 +39,7 @@ def train(cfg: LLMPagConfig):
     torch.set_float32_matmul_precision('medium')
     
     # Load tokenizer and model
+    # FIXME: several errors for potential warnings here, about unassigned variables and wrong types of configs
     if type(cfg) == LLMPagConfig:
         model, tokenizer = loader.load_model_and_tokenizer(
             cfg.model.pretrained_base,
