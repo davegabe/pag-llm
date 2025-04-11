@@ -78,7 +78,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         return masked_input_ids, masked_shifted_labels, selection_mask.view(n, -1)
 
-    def training_step(self, batch: BatchType, batch_idx: int):
+    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
         n, t = batch.input_ids.shape
         assert batch.attention_mask.shape == batch.input_ids.shape
         assert batch.labels is not None, f'Batch should contain the label for the loss function.'
@@ -124,11 +124,9 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
-        self.log(
-            "train/loss",
-            loss,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True
-        )
+        self.log_dict({
+            f'{prefix_tag}/loss_ce': loss_ce,
+            f'{prefix_tag}/loss_pag': loss_grads,
+            f'{prefix_tag}/loss': loss,
+        }, prog_bar=True)
         return loss
