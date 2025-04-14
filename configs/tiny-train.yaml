@@ -2,21 +2,21 @@ _target_: config.CustomLLMPagConfig
 
 training:
   _target_: config.TrainingConfig
-  learning_rate: 0.004629403549377777
-  batch_size: 16
+  learning_rate: 0.004
+  batch_size: 512
   gradient_accumulation_steps: 1
   num_epochs: 2
   warmup_steps: 100
   weight_decay: 0.01
-  max_seq_length: 4096
-  method: 'base' # 'base', 'pag-hidden'
+  max_seq_length: 256
+  method: 'base' # 'base', 'pag-hidden', 'pag-mix-identity-score-embeddings'
   pag_classes: 256
   lora:
     _target_: config.LoraTConfig
   # Hyperparameters to give different importance to parts of the loss function
   lambda_loss_ce: 1.0
   lambda_loss_pag: 2.0
-  run_evaluation_before_training: True
+  run_evaluation_before_training: False
 
 model:
   _target_: config.CustomModelConfig
