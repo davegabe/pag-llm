@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 @apply_config()
-def train(cfg: LLMPagConfig):
+def train(cfg: LLMPagConfig | CustomLLMPagConfig):
     # Sanity check on WANDB environment variables
     wandb_api_key = os.environ.get("WANDB_API_KEY", "")
     if not wandb_api_key:
@@ -40,20 +40,20 @@ def train(cfg: LLMPagConfig):
     torch.set_float32_matmul_precision('medium')
     
     # Load tokenizer and model
-    # FIXME: several errors for potential warnings here, about unassigned variables and wrong types of configs
-    if type(cfg) == LLMPagConfig:
+    if isinstance(cfg, CustomLLMPagConfig):
+        model, tokenizer = loader.create_model_and_tokenizer(
+            cfg.dataset,
+            cfg.model
+        )
+        model_name = str(cfg.model.output_dir).split("/")[-1]
+    else:
         model, tokenizer = loader.load_model_and_tokenizer(
             cfg.model.pretrained_base,
             cfg.model.random_initialization,
             cfg.training.lora
         )
         model_name = cfg.model.pretrained_base.split("/")[-1]
-    elif type(cfg) == CustomLLMPagConfig:
-        model, tokenizer = loader.create_model_and_tokenizer(
-            cfg.dataset,
-            cfg.model
-        )
-        model_name = str(cfg.model.output_dir).split("/")[-1]
+
     model.train()
     
     # Create data module
