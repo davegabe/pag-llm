@@ -15,3 +15,4 @@ python-dotenv>=1.1.0
 peft>=0.15.1
 autoattack @ git+https://github.com/fra31/auto-attack@a392200
 scikit-learn>=1.6.1
+tokenizers>=0.21.1
