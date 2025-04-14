@@ -27,7 +27,7 @@ def evaluate_robustness(model: LightningModule,
                         batch_size: int = 256,
                         max_batches: int = -1,
                         eps: float = 1e-3,
-                        attack_name: str = 'apdg-ce',
+                        attack_name: str = 'apgd-ce',
                         verbose: bool = True) -> float:
     adversary = AutoAttack(
         attack_forward_pass_for(model),
@@ -88,7 +88,9 @@ def accuracy_fgsm(model: LightningModule, dataset: Dataset, alpha: float) -> tup
             adversarial_classifications = adversarial_out.argmax(dim=1)
             adversarial_accuracy += (adversarial_classifications == labels).float().sum().cpu()
 
+    # noinspection PyTypeChecker
     real_accuracy /= len(dataset)
+    # noinspection PyTypeChecker
     adversarial_accuracy /= len(dataset)
 
     return real_accuracy.item(), adversarial_accuracy.item()
@@ -107,5 +109,6 @@ def get_accuracy(model: LightningModule, dataset: Dataset) -> float:
         classifications = output.argmax(dim=1)
         accuracy += (classifications == labels).float().sum().cpu()
 
+    # noinspection PyTypeChecker
     accuracy /= len(dataset)
     return accuracy.item()

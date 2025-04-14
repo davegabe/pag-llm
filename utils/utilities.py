@@ -33,6 +33,7 @@ def compute_perplexity(model: torch.nn.Module, eval_dataloader: torch.utils.data
 
             # Count non-padding tokens
             non_padding = batch["labels"] != -100
+            # noinspection PyUnresolvedReferences
             num_tokens = non_padding.sum().item()
 
             total_loss += loss.item() * num_tokens

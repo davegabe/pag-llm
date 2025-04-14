@@ -9,5 +9,6 @@ for i in range(len(data['cells'])):
         data['cells'][i]['outputs'] = [ o for o in data['cells'][i]['outputs'] if 'name' not in o or o['name'] != 'stderr' ]
         
 with open(ipynb_file, 'w') as f:
+    # noinspection PyTypeChecker
     json.dump(data, f)
     

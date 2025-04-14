@@ -5,15 +5,15 @@ import os
 import pathlib
 
 import torch.nn as nn
+from datasets import load_dataset
 from peft import LoraConfig, get_peft_model
-from transformers import PreTrainedModel, PreTrainedTokenizerFast, AutoTokenizer, AutoModelForCausalLM, LlamaConfig
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.trainers import BpeTrainer
+from transformers import PreTrainedModel, PreTrainedTokenizerFast, AutoTokenizer, AutoModelForCausalLM, LlamaConfig
 
 from config import CustomModelConfig, DatasetConfig, LoraTConfig
-from datasets import load_dataset
 
 
 def load_model_and_tokenizer(
@@ -26,7 +26,8 @@ def load_model_and_tokenizer(
 
     Args:
         model_path_or_name (pathlib.Path | str): Path to the model directory, or the name of the pretrained.
-        lora_config
+        random_initialization (bool): Whether to load the model with random initialization, or use pretrained weights.
+        lora_config (LoraTConfig | None): Configuration for LoRA (Low-Rank Adaptation) if applicable.
     """
     if isinstance(model_path_or_name, pathlib.Path):
         model_name = str(model_path_or_name.resolve())
