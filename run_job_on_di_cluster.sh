@@ -51,6 +51,8 @@ echo
 cd "/home/$USER/pag-llm"
 source .venv/bin/activate
 
+nvidia-smi
+
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 srun python train.py "$@"
