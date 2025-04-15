@@ -25,6 +25,8 @@ logger = logging.getLogger(__name__)
 
 @apply_config('tiny-train')
 def train(cfg: LLMPagConfig | CustomLLMPagConfig):
+    print('Using config:', cfg)
+
     # Sanity check on WANDB environment variables
     wandb_api_key = os.environ.get("WANDB_API_KEY", "")
     if not wandb_api_key:
