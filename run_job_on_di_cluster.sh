@@ -1,5 +1,4 @@
 #!/bin/bash --login
-set -eo pipefail
 ### NOTE
 ### This script is meant to be run on the DI cluster.
 ###
@@ -34,6 +33,8 @@ set -eo pipefail
 # Standard output and error to file
 # %x: job name, %j: job ID
 #SBATCH --output=%x-%j.SLURMout
+
+set -eo pipefail
 
 echo "Running with the following arguments:"
 echo "Job name: $SLURM_JOB_NAME"
