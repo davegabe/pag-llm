@@ -100,45 +100,41 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         loss_ce = outputs.loss
 
-        # Get the embeddings of masked X
-        masked_input_ids, masked_shifted_labels, mask = self._create_masked_input_ids(batch)
-        assert masked_input_ids.shape == (n, t), \
-            f'Expected masked_input_ids to be of shape (n, t), but got {masked_input_ids.shape}'
-        assert mask.shape == (n, t), \
-            f'Expected mask to be of shape (n, t), but got {mask.shape}'
-        masked_x_embed = self.model.get_input_embeddings()(masked_input_ids)
+        if self.current_epoch >= self.warmup_pretrain_epochs:
+            # Get the embeddings of masked X
+            masked_input_ids, masked_shifted_labels, mask = self._create_masked_input_ids(batch)
+            assert masked_input_ids.shape == (n, t), \
+                f'Expected masked_input_ids to be of shape (n, t), but got {masked_input_ids.shape}'
+            assert mask.shape == (n, t), \
+                f'Expected mask to be of shape (n, t), but got {mask.shape}'
+            masked_x_embed = self.model.get_input_embeddings()(masked_input_ids)
 
-        # Get the gradients on the masked embeddings
-        masked_x_embed.requires_grad_(True)
+            # Get the gradients on the masked embeddings
+            masked_x_embed.requires_grad_(True)
 
-        masked_outputs: CausalLMOutputWithPast = self.model(inputs_embeds=masked_x_embed,
-                                                            attention_mask=batch.attention_mask,
-                                                            labels='dummy',
-                                                            shift_labels=masked_shifted_labels,
-                                                            output_hidden_states=False)
-        masked_x_grads = torch.autograd.grad(masked_outputs.loss,
-                                             [masked_x_embed],
-                                             create_graph=True,
-                                             retain_graph=True)[0]
+            masked_outputs: CausalLMOutputWithPast = self.model(inputs_embeds=masked_x_embed,
+                                                                attention_mask=batch.attention_mask,
+                                                                labels='dummy',
+                                                                shift_labels=masked_shifted_labels,
+                                                                output_hidden_states=False)
+            masked_x_grads = torch.autograd.grad(masked_outputs.loss,
+                                                 [masked_x_embed],
+                                                 create_graph=True,
+                                                 retain_graph=True)[0]
 
-        # We want that gradients on the masked X will reconstruct the original X
-        # ==> We want to ignore the gradients on non-masked/visible tokens
-        padded_masked_x_grads = torch.zeros_like(masked_x_embed)
-        padded_masked_x_grads[mask] = masked_x_grads[mask]
-        padded_x_embed = torch.zeros_like(masked_x_embed)
-        padded_x_embed[mask] = x_embed[mask]
-        loss_grads = F.mse_loss(
-            input=padded_masked_x_grads.view(n * t, d),
-            target=padded_x_embed.view(n * t, d),
-            reduction='sum',
-        ) / mask.sum()
-
-        if self.current_epoch < self.warmup_pretrain_epochs:
-            # FIXME: after having understood the max VRAM usage,
-            #  we can skip the PAG loss computation in the warmup phase
-            # loss_grads = 0.0
-            pass
-
+            # We want that gradients on the masked X will reconstruct the original X
+            # ==> We want to ignore the gradients on non-masked/visible tokens
+            padded_masked_x_grads = torch.zeros_like(masked_x_embed)
+            padded_masked_x_grads[mask] = masked_x_grads[mask]
+            padded_x_embed = torch.zeros_like(masked_x_embed)
+            padded_x_embed[mask] = x_embed[mask]
+            loss_grads = F.mse_loss(
+                input=padded_masked_x_grads.view(n * t, d),
+                target=padded_x_embed.view(n * t, d),
+                reduction='sum',
+            ) / mask.sum()
+        else:
+            loss_grads = torch.zeros_like(loss_ce)
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
