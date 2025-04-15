@@ -28,7 +28,7 @@
 # Wall time
 # Format: "minutes", "hours:minutes:seconds",
 # "days-hours", or "days-hours:minutes"
-#SBATCH --time=07:00:00
+#SBATCH --time=15:00:00
 
 # Standard output and error to file
 # %x: job name, %j: job ID
