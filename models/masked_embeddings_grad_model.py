@@ -31,6 +31,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         self.criterion = torch.nn.CrossEntropyLoss()
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
+        self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
 
     def _create_masked_input_ids(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -118,11 +119,21 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         masked_x_grads = torch.autograd.grad(masked_outputs.loss, [masked_x_embed], create_graph=True)[0]
 
         # We want that gradients on the masked X will reconstruct the original X
-        # TODO: may we want to ignore the gradients on non-masked/visible tokens?
+        # ==> We want to ignore the gradients on non-masked/visible tokens
+        padded_masked_x_grads = torch.zeros_like(masked_x_embed)
+        padded_masked_x_grads[mask] = masked_x_grads[mask]
+        padded_x_embed = torch.zeros_like(masked_x_embed)
+        padded_x_embed[mask] = x_embed[mask]
         loss_grads = F.mse_loss(
-            input=masked_x_grads.view(n * t, d),
-            target=x_embed.view(n * t, d),
-        )
+            input=padded_masked_x_grads.view(n * t, d),
+            target=padded_x_embed.view(n * t, d),
+            reduction='sum',
+        ) / mask.sum()
+
+        if self.current_epoch < self.warmup_pretrain_epochs:
+            # FIXME: after having understood the max VRAM usage, we can skip the PAG loss computation in the warmup phase
+            loss_grads = 0.0
+
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 

@@ -147,7 +147,8 @@ def create_model_and_tokenizer(
         pad_token_id=fast_tokenizer.pad_token_id,
         bos_token_id=fast_tokenizer.bos_token_id,
         eos_token_id=fast_tokenizer.eos_token_id,
-        device_map='auto'
+        device_map='auto',
+        attn_implementation='eager',
     )
     model = AutoModelForCausalLM.from_config(config)
 

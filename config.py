@@ -23,6 +23,7 @@ class TrainingConfig:
     learning_rate: float
     batch_size: int
     gradient_accumulation_steps: int
+    warmup_pretrain_epochs: int
     num_epochs: int
     warmup_steps: int
     weight_decay: float

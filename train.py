@@ -23,7 +23,7 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-@apply_config()
+@apply_config('tiny-train')
 def train(cfg: LLMPagConfig | CustomLLMPagConfig):
     # Sanity check on WANDB environment variables
     wandb_api_key = os.environ.get("WANDB_API_KEY", "")
