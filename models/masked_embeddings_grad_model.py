@@ -117,9 +117,11 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                                                             output_hidden_states=False)
         masked_x_grads = torch.autograd.grad(masked_outputs.loss, [masked_x_embed], create_graph=True)[0]
 
+        # We want that gradients on the masked X will reconstruct the original X
+        # TODO: may we want to ignore the gradients on non-masked/visible tokens?
         loss_grads = F.mse_loss(
             input=masked_x_grads.view(n * t, d),
-            target=masked_x_embed.view(n * t, d),
+            target=x_embed.view(n * t, d),
         )
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
