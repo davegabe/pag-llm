@@ -33,6 +33,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
 
+    @torch.no_grad()
     def _create_masked_input_ids(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Create a masked input ids tensor where 10% of the tokens are replaced with [PAD] token.
@@ -93,7 +94,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         # Forward pass, with standard input X
         outputs: CausalLMOutputWithPast = self.model(inputs_embeds=x_embed,
                                                      attention_mask=batch.attention_mask,
-                                                     labels=batch.labels,
+                                                     labels='dummy',
                                                      shift_labels=batch.shift_labels,
                                                      output_hidden_states=False)
 
@@ -109,14 +110,16 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         # Get the gradients on the masked embeddings
         masked_x_embed.requires_grad_(True)
-        masked_x_embed.retain_grad()
 
         masked_outputs: CausalLMOutputWithPast = self.model(inputs_embeds=masked_x_embed,
                                                             attention_mask=batch.attention_mask,
                                                             labels='dummy',
                                                             shift_labels=masked_shifted_labels,
                                                             output_hidden_states=False)
-        masked_x_grads = torch.autograd.grad(masked_outputs.loss, [masked_x_embed], create_graph=True)[0]
+        masked_x_grads = torch.autograd.grad(masked_outputs.loss,
+                                             [masked_x_embed],
+                                             create_graph=True,
+                                             retain_graph=True)[0]
 
         # We want that gradients on the masked X will reconstruct the original X
         # ==> We want to ignore the gradients on non-masked/visible tokens
@@ -131,8 +134,10 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         ) / mask.sum()
 
         if self.current_epoch < self.warmup_pretrain_epochs:
-            # FIXME: after having understood the max VRAM usage, we can skip the PAG loss computation in the warmup phase
-            loss_grads = 0.0
+            # FIXME: after having understood the max VRAM usage,
+            #  we can skip the PAG loss computation in the warmup phase
+            # loss_grads = 0.0
+            pass
 
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
