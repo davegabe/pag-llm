@@ -40,6 +40,10 @@ echo "Running with the following arguments:"
 echo "Job name: $SLURM_JOB_NAME"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Git commit: $(git rev-parse HEAD)"
+echo
+echo "User specified arguments:"
+printf '%s\n' "$@"
+echo
 echo "========================="
 echo
 echo
@@ -49,4 +53,4 @@ source .venv/bin/activate
 
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python train.py
+srun python train.py "$@"
