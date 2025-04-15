@@ -6,3 +6,4 @@ downloaded_dataset/
 .env
 .venv/
 wandb/
+*.SLURMout
