@@ -111,7 +111,7 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
     trainer = pl.Trainer(
         max_epochs=cfg.training.num_epochs,
         accelerator="auto",
-        devices="auto",
+        devices=cfg.training.device if cfg.training.device else "auto",
         logger=wandb_logger,
         callbacks=[checkpoint_callback, lr_monitor],
         log_every_n_steps=cfg.logging.logging_steps,
