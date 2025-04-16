@@ -14,6 +14,7 @@ from models.base_model import BaseLMModel
 from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
 from models.pag_hidden_model import PAGHiddenModel
+from models.inv_first_token import InvFirstTokenModel
 from utils.index_token_to_dataset_item import DatasetIndexByToken
 
 # Load environment variables
@@ -74,6 +75,8 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method == "pag-mix-identity-score-embeddings":
         lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
+    elif cfg.training.method == "inv-first":
+        lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
     
