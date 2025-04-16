@@ -10,7 +10,9 @@ from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsMode
 
 def sim_matrix(a, b, eps=1e-8):
     """
-    added eps for numerical stability
+    torch.cdist, but with cosine similarity
+
+    Source: https://stackoverflow.com/a/67588366
     """
     a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
     a_norm = a / torch.clamp(a_n, min=eps)
@@ -34,6 +36,8 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         f'Expected vocab size to be 2048, but got {v}'
     assert d == 128, \
         f'Expected hidden size to be 128, but got {d}'
+
+    top_k_for_accuracy = 200
 
     # Create data module
     data_module = LMDataModule(cfg, lightning_model.tokenizer)
@@ -105,13 +109,26 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         assert y_pred.shape == (n,), \
             f'Expected y_pred shape {(n,)}, but got {y_pred.shape}'
 
-        accuracy += torch.sum(y_pred == y_true)
-
+        # accuracy += torch.sum(y_pred == y_true)
+        #
         # print('True distances:', dist_matrix[:, y_true][torch.eye(n) == 1])
+        # print('Predicted distances:', dist_matrix[:, y_pred][torch.eye(n) == 1])
 
-        tqdm.write(f'Batch accuracy: {accuracy}')
+        sorted_rank_of_y_pred = torch.zeros(n, dtype=torch.long, device=lightning_model.device)
+        for i in range(n):  # FIXME: do not use a for loop
+            predictions = dist_matrix[i]
+            assert predictions.shape == (v,), \
+                f'Expected predictions shape {(v,)}, but got {predictions.shape}'
 
-    tqdm.write(f'Final accuracy: {accuracy}')
+            sorted_predictions, _ = torch.sort(predictions)
+            k_pred = torch.eq(sorted_predictions, predictions[y_true[i]]).int().argmax()
+            sorted_rank_of_y_pred[i] = k_pred
+
+        # print('It would be K-th prediction:', sorted_rank_of_y_pred)
+        accuracy += (sorted_rank_of_y_pred < top_k_for_accuracy).sum()
+
+    tqdm.write(
+        f'Final accuracy: {accuracy} / {len(train_dataloader.dataset)} = {accuracy / len(train_dataloader.dataset):.2%}')
 
 
 if __name__ == "__main__":
