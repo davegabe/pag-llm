@@ -3,7 +3,7 @@ _target_: config.CustomLLMPagConfig
 training:
   _target_: config.TrainingConfig
   learning_rate: 0.004
-  batch_size: 128
+  batch_size: 256
   gradient_accumulation_steps: 1
   warmup_pretrain_epochs: 0
   num_epochs: 5
