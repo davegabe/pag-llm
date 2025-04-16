@@ -10,15 +10,6 @@ from models.base_model import BaseLMModel
 
 
 class InvFirstTokenModel(BaseLMModel):
-    """
-    This "masking" implies that, in a forward pass, a target token is replaced with [PAD] token.
-    Then, the model is trained to predict the original token BUT on the gradients with respect to that token!
-
-    In a nutshell:
-    - usual LLM in a forward pass
-    - BERT-like training on the gradients
-    """
-
     def __init__(
         self,
         model: PreTrainedModel,
@@ -30,6 +21,7 @@ class InvFirstTokenModel(BaseLMModel):
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
         self.k_nearest_neighbors = 5
+        print(self.model)
 
     def find_k_nearest_neighbors(self, inv_first_embed: torch.Tensor, k: int = 5) -> torch.Tensor:
         """
