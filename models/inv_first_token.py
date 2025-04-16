@@ -210,7 +210,8 @@ class InvFirstTokenModel(BaseLMModel):
             self.log_dict({
                 'val/loss_ce': loss_ce,
                 'val/loss_first_inv': loss_grads,
-                'val/perplexity': perplexity
+                'val/perplexity': perplexity,
+                'val/loss': loss,
             }, prog_bar=True)
 
         # Ensure that the model has no gradients
