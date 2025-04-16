@@ -4,6 +4,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from config import apply_config, CustomLLMPagConfig, LLMPagConfig
 from data.data_module import LMDataModule
+from data.data_processor import BatchType
 from infer_tinystories import load_model
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
 
@@ -54,6 +55,8 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
 
     # We want to classify the first token, given the gradients on the embedding layer
     for batch in tqdm(train_dataloader):
+        batch: BatchType
+        batch.to(lightning_model.device)
         x_input = batch.input_ids
         n = x_input.size(0)
         k = 10
@@ -72,7 +75,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         x_attn_partial = batch.attention_mask[:, k:]
         assert torch.equal(
             batch.attention_mask[:, k],
-            torch.ones(n, dtype=torch.long),
+            torch.ones(n, dtype=torch.long, device=lightning_model.device),
         )
 
         # We want to predict the first token
