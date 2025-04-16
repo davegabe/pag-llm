@@ -83,7 +83,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
             x_embeds_partial.requires_grad_(True)
             masked_outputs: CausalLMOutputWithPast = lightning_model.model(inputs_embeds=x_embeds_partial,
                                                                            attention_mask=x_attn_partial,
-                                                                           labels=x_ids_partial,
+                                                                           labels=x_ids_partial,  # FIXME
                                                                            output_hidden_states=False)
             x_grads = torch.autograd.grad(
                 masked_outputs.loss,
@@ -95,7 +95,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         # The result `dist_matrix` will have shape (N, V)
         # where dist_matrix[i, j] is the L2 distance between N_tensor[i] and M_tensor[j]
         y_hat = x_grads[:, 0, :]
-        dist_matrix = 1 - sim_matrix(y_hat, all_embeddings)
+        dist_matrix = torch.cdist(y_hat, all_embeddings, p=2)
         assert dist_matrix.shape == (n, v), \
             f'Expected dist_matrix shape {(n, v)}, but got {dist_matrix.shape}'
 
@@ -109,9 +109,9 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
 
         # print('True distances:', dist_matrix[:, y_true][torch.eye(n) == 1])
 
-        # print(f'Batch accuracy: {accuracy}')
+        tqdm.write(f'Batch accuracy: {accuracy}')
 
-    print('Final accuracy:', accuracy.item())
+    tqdm.write(f'Final accuracy: {accuracy}')
 
 
 if __name__ == "__main__":
