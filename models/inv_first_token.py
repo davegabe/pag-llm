@@ -54,42 +54,85 @@ class InvFirstTokenModel(BaseLMModel):
         _, top_k_indices = torch.topk(cos_sim, k, dim=1, largest=True, sorted=False) # [batch_size, k]
         return top_k_indices
 
-
-    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+    def _compute_losses(self, batch: BatchType, prefix_tag: str) -> tuple:
+        """
+        Compute common losses used in both training and validation steps.
+        
+        Args:
+            batch (BatchType): The batch of data.
+            prefix_tag (str): The prefix tag (e.g., 'train' or 'val').
+        
+        Returns:
+            tuple: A tuple containing:
+                - loss_ce: Cross-entropy loss
+                - loss_grads: Gradient-based loss for first token
+                - grad_x_embed: Gradients of embeddings
+                - inv_first_label: Original first token labels
+        """
+        # Get the batch size and sequence length
         n, t = batch.input_ids.shape
-
-        # Mask the first token in input_ids and labels
-        batch.input_ids[:, 0] = self.tokenizer.pad_token_id
+        
+        if prefix_tag != 'train':
+            # Clone inputs to avoid inference mode issues (caused by Lightning)
+            input_ids = batch.input_ids.clone()
+            attention_mask = batch.attention_mask.clone()
+            shift_labels = batch.shift_labels.clone()
+            # We don't need to create gradients for the validation step
+            create_graph = False
+        else:
+            # We can use the original batch
+            input_ids = batch.input_ids
+            attention_mask = batch.attention_mask
+            shift_labels = batch.shift_labels
+            # We need to create gradients for the training step
+            create_graph = True
+        
+        # Mask the first token in input_ids
+        input_ids[:, 0] = self.tokenizer.pad_token_id
 
         # Get the embeddings of X
-        x_embed = self.model.get_input_embeddings()(batch.input_ids)
+        x_embed = self.model.get_input_embeddings()(input_ids)
+        if create_graph:
+            x_embed.requires_grad_(True)
 
-        # Forward pass, with standard input X
+        # Forward pass
         outputs: CausalLMOutputWithPast = self.model(
             inputs_embeds=x_embed,
-            attention_mask=batch.attention_mask,
+            attention_mask=attention_mask,
             labels='dummy',
-            shift_labels=batch.shift_labels,
+            shift_labels=shift_labels,
             output_hidden_states=False
         )
         loss_ce = outputs.loss
 
+        # Calculate gradient-based loss if we're past the warmup period
         if self.current_epoch >= self.warmup_pretrain_epochs:
             # Get the embedding of the first real token (not [PAD])
-            inv_first_label = batch.labels[:, 0]
-            inv_first_label = inv_first_label.unsqueeze(1).expand(-1, t)
-            inv_first_embed = self.model.get_input_embeddings()(inv_first_label)
+            inv_first_label = batch.labels[:, 0].clone()
+            inv_first_label_expanded = inv_first_label.unsqueeze(1).expand(-1, t)
+            inv_first_embed = self.model.get_input_embeddings()(inv_first_label_expanded)
 
             # Get the gradients on the first token
-            grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=True)[0]
+            grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
+            
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.mse_loss(
                 input=grad_x_embed[:, 0, :],
                 target=inv_first_embed[:, 0, :]
             )
         else:
+            # We still need to return the loss and gradients for the first token
+            inv_first_label = batch.labels[:, 0].clone()
+            grad_x_embed = None
             loss_grads = torch.zeros_like(loss_ce)
 
+        return loss_ce, loss_grads, grad_x_embed, inv_first_label
+
+    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+        # Compute losses using common function
+        loss_ce, loss_grads, _, _ = self._compute_losses(batch, prefix_tag)
+        
+        # Combine losses
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
         self.log_dict({
@@ -99,7 +142,7 @@ class InvFirstTokenModel(BaseLMModel):
         }, prog_bar=True)
         return loss
 
-    def validation_step(self, batch: BatchType, batch_idx: int):
+    def validation_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'val') -> torch.Tensor:
         """
         Compute the validation loss and perplexity on the forward pass.
         Compute also the accuracy of the Inverse First Token task.
@@ -112,65 +155,33 @@ class InvFirstTokenModel(BaseLMModel):
         self.model.eval()
 
         with torch.inference_mode(mode=False):
-            input_ids = batch.input_ids.clone()
-            attention_mask = batch.attention_mask.clone()
-            shift_labels = batch.shift_labels.clone()
-
-            # Get the batch size and sequence length
-            n, t = input_ids.shape
-
-            # Mask the first token in input_ids and labels
-            input_ids[:, 0] = self.tokenizer.pad_token_id
-
-            # Get the embeddings of X
-            x_embed = self.model.get_input_embeddings()(input_ids)
-            x_embed.requires_grad_(True)
-
-            # Forward pass, with standard input X
-            outputs: CausalLMOutputWithPast = self.model(
-                inputs_embeds=x_embed,
-                attention_mask=attention_mask,
-                labels='dummy',
-                shift_labels=shift_labels,
-                output_hidden_states=False
-            )
-            loss_ce = outputs.loss
+            # Compute losses using common function
+            loss_ce, loss_grads, grad_x_embed, inv_first_label = self._compute_losses(batch, prefix_tag)
             
-            # Get the embedding of the first real token (not [PAD])
-            inv_first_label = batch.labels[:, 0].clone()
-            inv_first_label = inv_first_label.unsqueeze(1).expand(-1, t)
-            inv_first_embed = self.model.get_input_embeddings()(inv_first_label)
-
-            # Get the gradients on the first token
-            grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=False)[0]
-            # We want that gradients on the first token will reconstruct the original token
-            loss_grads = F.mse_loss(
-                input=grad_x_embed[:, 0, :],
-                target=inv_first_embed[:, 0, :]
-            )
-
+            # Combine losses
             loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
-            # Find the token indices of the k-nearest neighbors embedding to the first token
-            nn_indices = self.find_k_nearest_neighbors(grad_x_embed[:, 0, :], self.k_nearest_neighbors) # [batch_size, k]
+            if grad_x_embed is not None:
+                # Find the token indices of the k-nearest neighbors embedding to the first token
+                nn_indices = self.find_k_nearest_neighbors(grad_x_embed[:, 0, :], self.k_nearest_neighbors) # [batch_size, k]
 
-            # Get the labels of the first token (token indices)
-            inv_first_label = batch.labels[:, 0] # [batch_size]
+                # Get the batch size
+                n = batch.input_ids.shape[0]
 
-            # Check if the first token is in the k-nearest neighbors
-            is_in_k_nearest = torch.zeros((n, self.k_nearest_neighbors), device=inv_first_label.device, dtype=torch.bool) # [batch_size, k]
-            for k in range(self.k_nearest_neighbors):
-                is_in_k_nearest[:, k] = (inv_first_label == nn_indices[:, k])
-                
-            # Calculate the accuracy on the k-nearest neighbors
-            for k in range(self.k_nearest_neighbors):
-                # Log the accuracy at exact k position
-                acc = is_in_k_nearest[:, k].float().mean()
-                self.log(f'val/{k+1}_acc', acc, prog_bar=True)
+                # Check if the first token is in the k-nearest neighbors
+                is_in_k_nearest = torch.zeros((n, self.k_nearest_neighbors), device=inv_first_label.device, dtype=torch.bool) # [batch_size, k]
+                for k in range(self.k_nearest_neighbors):
+                    is_in_k_nearest[:, k] = (inv_first_label == nn_indices[:, k])
+                    
+                # Calculate the accuracy on the k-nearest neighbors
+                for k in range(self.k_nearest_neighbors):
+                    # Log the accuracy at exact k position
+                    acc = is_in_k_nearest[:, k].float().mean()
+                    self.log(f'val/{k+1}_acc', acc, prog_bar=True)
 
-                # Log the accuracy for the first k positions
-                acc = is_in_k_nearest[:, :k+1].any(dim=1).float().mean()
-                self.log(f'val/top_{k+1}_acc', acc, prog_bar=True)
+                    # Log the accuracy for the first k positions
+                    acc = is_in_k_nearest[:, :k+1].any(dim=1).float().mean()
+                    self.log(f'val/top_{k+1}_acc', acc, prog_bar=True)
 
             # Calculate perplexity
             perplexity = torch.exp(loss_ce)
@@ -180,6 +191,6 @@ class InvFirstTokenModel(BaseLMModel):
                 'val/perplexity': perplexity
             }, prog_bar=True)
 
-        # Ensure that the model has no gradients (this is not necessary, but just to be sure)
+        # Ensure that the model has no gradients
         self.model.zero_grad()
         return loss
