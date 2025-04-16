@@ -12,17 +12,11 @@ from models.pag_hidden_model import PAGHiddenModel
 from utils.index_token_to_dataset_item import DatasetIndexByToken
 
 
-@apply_config('tiny-train')
-def main(cfg: CustomLLMPagConfig | LLMPagConfig):
+def load_model(cfg: CustomLLMPagConfig | LLMPagConfig) -> BaseLMModel:
     # Check if checkpoints directory exists
     model_path: str | pathlib.Path
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    # Get last checkpoint
-    files = cfg.model.output_dir.glob("*.ckpt")
-    model_path = max(files, key=lambda f: f.stat().st_mtime)
-    print(f"- Using fine-tuned model from {model_path}")
 
     # Load model and tokenizer
     model, tokenizer = loader.create_model_and_tokenizer(
@@ -75,6 +69,14 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
     # Move model to GPU if available
     lightning_model.to(device)
     lightning_model.eval()
+    tokenizer.eos_token = '<|endoftext|>'
+
+    return lightning_model
+
+
+@apply_config('tiny-train')
+def main(cfg: CustomLLMPagConfig | LLMPagConfig):
+    lightning_model = load_model(cfg)
 
     # Example prompts
     prompts = [
@@ -85,7 +87,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
     print("-" * 80)
     for prompt in prompts:
         # Encode prompt with attention mask
-        encoded_input = lightning_model.tokenizer(prompt, return_tensors="pt", padding=True).to(device)
+        encoded_input = lightning_model.tokenizer(prompt, return_tensors="pt", padding=True).to(lightning_model.device)
 
         # Generate text
         outputs = lightning_model.model.generate(
@@ -94,11 +96,16 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
             max_length=256,
             num_return_sequences=1,
             no_repeat_ngram_size=2,  # To avoid repeating text
-            pad_token_id=tokenizer.pad_token_id,  # Explicitly set pad token id
+            pad_token_id=lightning_model.tokenizer.pad_token_id,  # Explicitly set pad token id
         )
 
         # Decode and return generated text
         generated_text = lightning_model.tokenizer.decode(outputs[0], skip_special_tokens=False)
+
+        # Remove the text after the EOS, if present
+        eos_index = generated_text.find(lightning_model.tokenizer.eos_token)
+        if eos_index != -1:
+            generated_text = generated_text[:eos_index]
 
         print(f"Prompt: {prompt}")
         print(f"Generated: {generated_text}")

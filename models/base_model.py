@@ -12,7 +12,7 @@ class BaseLMModel(pl.LightningModule):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
-            config: LLMPagConfig
+            config: LLMPagConfig,
     ):
         super().__init__()
         self.model = model

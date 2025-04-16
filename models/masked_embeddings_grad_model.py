@@ -132,7 +132,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                 input=padded_masked_x_grads.view(n * t, d),
                 target=padded_x_embed.view(n * t, d),
                 reduction='sum',
-            ) / mask.sum()
+            ) / n
         else:
             loss_grads = torch.zeros_like(loss_ce)
 
