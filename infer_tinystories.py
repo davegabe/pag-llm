@@ -16,7 +16,8 @@ def load_model(cfg: CustomLLMPagConfig | LLMPagConfig) -> BaseLMModel:
     # Check if checkpoints directory exists
     model_path: str | pathlib.Path
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    default_device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = cfg.training.device or default_device
 
     # Load model and tokenizer
     model, tokenizer = loader.create_model_and_tokenizer(

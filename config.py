@@ -37,6 +37,7 @@ class TrainingConfig:
     lambda_loss_pag: float
 
     run_evaluation_before_training: bool = True
+    device: str | None = None
 
 
 @dataclass
