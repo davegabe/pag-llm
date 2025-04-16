@@ -57,6 +57,8 @@ def main(cfg: LLMPagConfig):
         # Get last checkpoint
         subdirs = list(cfg.model.output_dir.glob("*"))
         subdirs = [d for d in subdirs if d.is_dir()]
+        if not subdirs:
+            raise Exception(f"Checkpoint directory ({cfg.model.output_dir}) is empty.")
         model_path = max(
             subdirs,
             key=lambda f: f.stat().st_mtime,
