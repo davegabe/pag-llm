@@ -59,6 +59,7 @@ class IdentityGradModel(BaseLMModel):
         """
         # Get the batch size and sequence length
         n, t = batch.input_ids.shape
+        v = self.model.config.vocab_size
 
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
@@ -77,6 +78,8 @@ class IdentityGradModel(BaseLMModel):
 
         # Get the embeddings of X
         x_embed = self.model.get_input_embeddings()(input_ids)
+        d = x_embed.size(-1)
+        assert x_embed.shape == (n, t, d)
         x_embed.requires_grad_(True)
 
         # Forward pass
@@ -95,12 +98,12 @@ class IdentityGradModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
 
             # Forward pass to get the logits and probabilities
-            grad_logits, _ = self._forward_grad_embeddings(grad_x_embed)
+            grad_logits = self._forward_grad_embeddings(grad_x_embed)
 
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
-                input=grad_logits,
-                target=input_ids,
+                input=grad_logits.view(n * t, v),
+                target=input_ids.view(n * t),
                 reduction='mean'
             )
         else:
