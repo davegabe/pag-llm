@@ -101,11 +101,20 @@ class IdentityGradModel(BaseLMModel):
             grad_logits = self._forward_grad_embeddings(grad_x_embed)
 
             # We want that gradients on the first token will reconstruct the original token
+            assert not input_ids.requires_grad
             loss_grads = F.cross_entropy(
                 input=grad_logits.view(n * t, v),
                 target=input_ids.view(n * t),
                 reduction='mean'
             )
+            # # Check if all parameters receive gradients after only loss_grads backward
+            # for p in self.model.parameters():
+            #     assert p.grad is None, f"Parameter {p} has gradients before backward"
+            # loss_grads.sum().backward()
+            # for p in self.model.parameters():
+            #     assert p.grad is not None, f"Parameter {p} has no gradient"
+            # print(f"Gradients shape: {self.model.lm_head.weight.grad.shape}")
+            # import sys; sys.exit(0)
         else:
             # We still need to return the loss and gradients for the first token
             loss_grads = torch.zeros_like(loss_ce)
