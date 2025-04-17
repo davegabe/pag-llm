@@ -39,8 +39,11 @@ class IdentityGradModel(BaseLMModel):
         n, t, d = grad_x_embed.shape
         v = self.model.config.vocab_size
 
-        # Get the logits of the model
-        logits = self.model.lm_head(grad_x_embed)
+        # We do not want to compute gradients on the lm_head.weight
+        # because our goal is to have a grad_x_embed that already maps to the correct token
+        detached_lm_head_weight = self.model.lm_head.weight.detach()
+        assert self.model.lm_head.bias is None, "lm_head should not have bias"
+        logits = F.linear(grad_x_embed, detached_lm_head_weight)
         assert logits.shape == (n, t, v)
 
         return logits
