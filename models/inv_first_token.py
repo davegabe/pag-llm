@@ -46,7 +46,7 @@ class InvFirstTokenModel(BaseLMModel):
     #     _, top_k_indices = torch.topk(cos_sim, k, dim=1, largest=True, sorted=False) # [batch_size, k]
     #     return top_k_indices
 
-    def _forward_grad_embeddings(self, grad_x_embed: torch.Tensor) -> torch.Tensor:
+    def _forward_grad_embeddings(self, grad_x_embed: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Project the gradients of the embeddings to the vocabulary space using the head of the model.
 
@@ -169,6 +169,7 @@ class InvFirstTokenModel(BaseLMModel):
         Compute also the accuracy of the Inverse First Token task.
 
         Args:
+            prefix_tag: Tag prefix
             batch (BatchType): The batch of data.
             batch_idx (int): The index of the batch.
         """
