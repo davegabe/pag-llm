@@ -138,9 +138,6 @@ class IdentityGradModel(BaseLMModel):
             batch_idx (int): The index of the batch.
 
         """
-        # Set the model to evaluation mode
-        self.model.eval()
-
         with torch.inference_mode(mode=False):
             # Compute losses using common function
             loss_ce, loss_grads = self._compute_losses(batch)

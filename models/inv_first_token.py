@@ -173,9 +173,6 @@ class InvFirstTokenModel(BaseLMModel):
             batch (BatchType): The batch of data.
             batch_idx (int): The index of the batch.
         """
-        # Set the model to evaluation mode
-        self.model.eval()
-
         with torch.inference_mode(mode=False):
             # Compute losses using common function
             loss_ce, loss_grads, grad_x_embed, inv_first_label = self._compute_losses(batch, prefix_tag)
