@@ -148,9 +148,10 @@ class IdentityGradModel(BaseLMModel):
             # Calculate perplexity
             perplexity = torch.exp(loss_ce)
             self.log_dict({
-                'val/loss_ce': loss_ce,
-                'val/loss_first_inv': loss_grads,
-                'val/perplexity': perplexity
+                f'{prefix_tag}/loss_ce': loss_ce,
+                f'{prefix_tag}/loss_first_inv': loss_grads,
+                f'{prefix_tag}/perplexity': perplexity,
+                f'{prefix_tag}/loss': loss,
             }, prog_bar=True)
 
         # Ensure that the model has no gradients
