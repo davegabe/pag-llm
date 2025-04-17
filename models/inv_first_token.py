@@ -56,7 +56,6 @@ class InvFirstTokenModel(BaseLMModel):
         Returns:
             tuple: A tuple containing:
                 - logits: The logits of the model. [batch_size, seq_len, vocab_size]
-                - probs: The probabilities of the model. [batch_size, seq_len, vocab_size]
                 - top_k_indices: The indices of the top k tokens. [batch_size, seq_len, k]
         """
         # Get the logits of the model
@@ -67,8 +66,8 @@ class InvFirstTokenModel(BaseLMModel):
 
         # Get the top k indices
         _, top_k_indices = torch.topk(probs, self.k_samples, dim=-1, largest=True, sorted=False) # [batch_size, k]
-        
-        return logits, probs, top_k_indices
+
+        return logits, top_k_indices
 
 
     def _compute_losses(self, batch: BatchType, prefix_tag: str) -> tuple:
@@ -133,11 +132,11 @@ class InvFirstTokenModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
 
             # Forward pass to get the logits and probabilities
-            _, probs, _ = self._forward_grad_embeddings(grad_x_embed[:, 0, :])
+            logits, _ = self._forward_grad_embeddings(grad_x_embed[:, 0, :])
             
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
-                input=probs,
+                input=logits,
                 target=inv_first_label,
                 reduction='mean'
             )
@@ -185,7 +184,7 @@ class InvFirstTokenModel(BaseLMModel):
 
             if grad_x_embed is not None:
                 # Get the logits and probabilities
-                _, _, nn_indices = self._forward_grad_embeddings(grad_x_embed[:, 0, :])
+                _, nn_indices = self._forward_grad_embeddings(grad_x_embed[:, 0, :])
 
                 # Get the batch size
                 n = batch.input_ids.shape[0]
