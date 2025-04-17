@@ -164,7 +164,7 @@ class IdentityGradModel(BaseLMModel):
                 f'{prefix_tag}/loss_first_inv': loss_grads,
                 f'{prefix_tag}/perplexity': perplexity,
                 f'{prefix_tag}/loss': loss,
-            }, prog_bar=True)
+            }, prog_bar=True, sync_dist=True)
 
         # Ensure that the model has no gradients
         self.model.zero_grad()
