@@ -42,16 +42,17 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
             input_ids = batch.input_ids.clone()
+            shift_labels = batch.shift_labels.clone()
             # We don't need to create gradients for the validation step
             create_graph = False
         else:
             # We can use the original batch
             input_ids = batch.input_ids
+            shift_labels = batch.shift_labels
             # We need to create gradients for the training step
             create_graph = True
 
         attention_mask = batch.attention_mask
-        shift_labels = batch.shift_labels
 
         # Get the embeddings of X
         x_embed = self.model.get_input_embeddings()(input_ids)
@@ -80,7 +81,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             grad_x_embed = grad_x_embed[:, :self.first_tokens_to_predict, :]
 
             # Flatten all the gradients
-            grad_x_embed = grad_x_embed.view(tot_tokens, hidden_dim)
+            grad_x_embed = grad_x_embed.reshape(tot_tokens, hidden_dim)
 
             # Forward pass to get the logits and probabilities
             logits = forward_grad_embeddings(self.model, grad_x_embed)

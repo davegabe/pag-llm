@@ -67,17 +67,17 @@ class IdentityGradModel(BaseLMModel):
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
             input_ids = batch.input_ids.clone()
-            attention_mask = batch.attention_mask.clone()
             shift_labels = batch.shift_labels.clone()
             # We don't need to create gradients for the validation step
             create_graph = False
         else:
             # We can use the original batch
             input_ids = batch.input_ids
-            attention_mask = batch.attention_mask
             shift_labels = batch.shift_labels
             # We need to create gradients for the training step
             create_graph = True
+
+        attention_mask = batch.attention_mask
 
         # Get the embeddings of X
         x_embed = self.model.get_input_embeddings()(input_ids)

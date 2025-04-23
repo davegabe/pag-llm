@@ -40,17 +40,18 @@ class InvFirstTokenModel(BaseLMModel):
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
             input_ids = batch.input_ids.clone()
+            shift_labels = batch.shift_labels.clone()
             # We don't need to create gradients for the validation step
             create_graph = False
         else:
             # We can use the original batch
             input_ids = batch.input_ids
+            shift_labels = batch.shift_labels
             # We need to create gradients for the training step
             create_graph = True
 
         attention_mask = batch.attention_mask
-        shift_labels = batch.shift_labels
-        
+
         # Mask the first token in input_ids
         input_ids[:, 0] = self.tokenizer.pad_token_id
 
