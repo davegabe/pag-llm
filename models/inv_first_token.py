@@ -58,9 +58,20 @@ class InvFirstTokenModel(BaseLMModel):
                 - logits: The logits of the model. [batch_size, seq_len, vocab_size]
                 - top_k_indices: The indices of the top k tokens. [batch_size, seq_len, k]
         """
-        # Get the logits of the model
-        logits = self.model.lm_head(grad_x_embed) # [batch_size, vocab_size]
+        # Apply the model normalization to the gradients
+        grad_x_embed = self.model.model.norm(grad_x_embed)  # [batch_size, embed_dim]
 
+        # Create copy of lm_head weights to avoid affecting existing gradients
+        lm_head_weight = self.model.lm_head.weight.clone().detach()
+        
+        if hasattr(self.model.lm_head, 'bias') and self.model.lm_head.bias is not None:
+            lm_head_bias = self.model.lm_head.bias.clone().detach()
+        else:
+            lm_head_bias = None
+        
+        # Manually compute the projection using copied weights
+        logits = F.linear(grad_x_embed, lm_head_weight, lm_head_bias)
+        
         # Get the probabilities of the model
         probs = F.softmax(logits, dim=-1) # [batch_size, vocab_size]
 
