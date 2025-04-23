@@ -79,7 +79,7 @@ class InvFirstTokenModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
 
             # Forward pass to get the logits and probabilities
-            logits, _ = forward_grad_embeddings(self.model, grad_x_embed[:, 0, :])
+            logits = forward_grad_embeddings(self.model, grad_x_embed[:, 0, :])
             
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
