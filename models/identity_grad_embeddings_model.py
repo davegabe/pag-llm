@@ -7,6 +7,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
+from models.common import forward_grad_embeddings, compute_top_k_accuracies
 
 
 class IdentityGradEmbeddingsModel(BaseLMModel):
@@ -17,44 +18,137 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             config: LLMPagConfig,
     ):
         super().__init__(model, tokenizer, config)
-        self.hidden_layer_index = config.model.hidden_layer_index
-        self.pag_classes = config.training.pag_classes  # Number of different next tokens to consider
-        self.criterion = torch.nn.CrossEntropyLoss()
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
+        self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
+        self.k_samples = 5
+        self.first_tokens_to_predict = 15
 
-    def training_step(self, batch: BatchType, batch_idx: int):
-        n, t = batch.input_ids.shape
-        assert batch.attention_mask.shape == batch.input_ids.shape
-        assert batch.labels is not None, f'Batch should contain the label for the loss function.'
-        assert batch.labels.shape == batch.input_ids.shape
+    def _compute_losses(self, batch: BatchType) -> tuple:
+        """
+        Compute common losses used in both training and validation steps.
 
-        # Get the embeddings
-        x_embed = self.model.get_input_embeddings()(batch.input_ids)
-        d = x_embed.size(-1)
-        assert x_embed.shape == (n, t, d), f'Expected x_embed to be of shape (n, t, d), but got {x_embed.shape}'
-        x_embed.requires_grad_(True)
+        Args:
+            batch (BatchType): The batch of data.
+
+        Returns:
+            tuple: A tuple containing:
+                - loss_ce: Cross-entropy loss
+                - loss_grads: Gradient-based loss for first token
+                - grad_x_embed: Gradients of embeddings
+                - inv_first_label: Original first token labels
+        """
+
+        if batch.input_ids.is_inference():
+            # Clone inputs to avoid inference mode issues (caused by Lightning)
+            input_ids = batch.input_ids.clone()
+            # We don't need to create gradients for the validation step
+            create_graph = False
+        else:
+            # We can use the original batch
+            input_ids = batch.input_ids
+            # We need to create gradients for the training step
+            create_graph = True
+
+        attention_mask = batch.attention_mask
+        shift_labels = batch.shift_labels
+
+        # Get the embeddings of X
+        x_embed = self.model.get_input_embeddings()(input_ids)
+        if create_graph:
+            x_embed.requires_grad_(True)
 
         # Forward pass
-        outputs: CausalLMOutputWithPast = self.model(inputs_embeds=x_embed,
-                                                     attention_mask=batch.attention_mask,
-                                                     labels=batch.labels,
-                                                     output_hidden_states=False)
-
+        outputs: CausalLMOutputWithPast = self.model(
+            inputs_embeds=x_embed,
+            attention_mask=attention_mask,
+            labels='dummy',
+            shift_labels=shift_labels,
+            output_hidden_states=False
+        )
         loss_ce = outputs.loss
 
-        grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=True)[0]
-        loss_identity_grads = F.cosine_similarity(x_embed, grad_x_embed, dim=-1)
-        assert loss_identity_grads.shape == (n, t)
-        loss_identity_grads = 1 - loss_identity_grads.mean()
+        # Get the embedding of the first tokens (They have not been masked)
+        inv_first_label = batch.input_ids[:, :self.first_tokens_to_predict].clone()
+        tot_tokens, hidden_dim = input_ids.size(0) * self.first_tokens_to_predict, x_embed.size(-1)
+        inv_first_label = inv_first_label.view(tot_tokens)  # They must be flattened
 
-        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_identity_grads
+        # Calculate gradient-based loss if we're past the warmup period
+        if self.current_epoch >= self.warmup_pretrain_epochs:
+            # Get the gradients on the first token
+            grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
+            grad_x_embed = grad_x_embed[:, :self.first_tokens_to_predict, :]
 
-        self.log(
-            "train/loss",
-            loss,
-            prog_bar=True,
-            logger=True,
-            sync_dist=True
-        )
+            # Flatten all the gradients
+            grad_x_embed = grad_x_embed.view(tot_tokens, hidden_dim)
+
+            # Forward pass to get the logits and probabilities
+            logits = forward_grad_embeddings(self.model, grad_x_embed)
+            assert logits.shape == (tot_tokens, self.model.config.vocab_size)
+
+            # We want that gradients on the first token will reconstruct the original token
+            loss_grads = F.cross_entropy(
+                input=logits,
+                target=inv_first_label,
+                reduction='mean'
+            )
+        else:
+            # We still need to return the loss and gradients for the first token
+            grad_x_embed = None
+            loss_grads = torch.zeros_like(loss_ce)
+
+        return loss_ce, loss_grads, grad_x_embed, inv_first_label
+
+    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+        # Compute losses using common function
+        loss_ce, loss_grads, _, _ = self._compute_losses(batch)
+
+        # Combine losses
+        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
+
+        self.log_dict({
+            f'{prefix_tag}/loss_ce': loss_ce,
+            f'{prefix_tag}/loss_first_inv': loss_grads,
+            f'{prefix_tag}/loss': loss,
+        }, prog_bar=True, sync_dist=True)
+
+        return loss
+
+    def validation_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'val') -> torch.Tensor:
+        """
+        Compute the validation loss and perplexity on the forward pass.
+        Compute also the accuracy of the Inverse First Token task.
+
+        Args:
+            prefix_tag: Tag prefix
+            batch (BatchType): The batch of data.
+            batch_idx (int): The index of the batch.
+        """
+        with torch.inference_mode(mode=False):
+            # Compute losses using common function
+            loss_ce, loss_grads, grad_x_embed, inv_first_label = self._compute_losses(batch)
+
+            # Combine losses
+            loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
+
+            if grad_x_embed is not None:
+                # Get the logits and probabilities
+                logits = forward_grad_embeddings(self.model, grad_x_embed)
+
+                # Get the top k indices
+                top_k_accuracies = compute_top_k_accuracies(inv_first_label, logits, self.k_samples, tag=prefix_tag)
+                self.log_dict(top_k_accuracies, sync_dist=True)
+
+            # Calculate perplexity
+            perplexity = torch.exp(loss_ce)
+            self.log_dict({
+                'val/loss_ce': loss_ce,
+                'val/loss_first_inv': loss_grads,
+                'val/perplexity': perplexity,
+                'val/loss': loss,
+            }, prog_bar=True, sync_dist=True)
+
+        # Ensure that the model has no gradients
+        self.model.zero_grad()
+
         return loss
