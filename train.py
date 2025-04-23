@@ -120,6 +120,7 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         log_every_n_steps=cfg.logging.logging_steps,
         val_check_interval=cfg.logging.evaluation_steps,
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
+        gradient_clip_val=1.0,
     )
     
     # Evaluate model before training
