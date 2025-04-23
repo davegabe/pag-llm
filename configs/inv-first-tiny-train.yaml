@@ -10,7 +10,7 @@ training:
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256
-  method: 'inv-first' # 'inv-first'
+  method: 'pag-identity-embeddings'
   pag_classes: 256
   lora:
     _target_: config.LoraTConfig
