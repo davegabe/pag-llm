@@ -170,7 +170,7 @@ class InvFirstTokenModel(BaseLMModel):
             f'{prefix_tag}/loss_ce': loss_ce,
             f'{prefix_tag}/loss_first_inv': loss_grads,
             f'{prefix_tag}/loss': loss,
-        }, prog_bar=True)
+        }, prog_bar=True, sync_dist=True)
         
         return loss
 
@@ -207,11 +207,11 @@ class InvFirstTokenModel(BaseLMModel):
                 for k in range(self.k_samples):
                     # Log the accuracy at exact k position
                     acc = is_in_k_nearest[:, k].float().mean()
-                    self.log(f'val/{k+1}_acc', acc, prog_bar=True)
+                    self.log(f'val/{k + 1}_acc', acc, prog_bar=True, sync_dist=True)
 
                     # Log the accuracy for the first k positions
                     acc = is_in_k_nearest[:, :k+1].any(dim=1).float().mean()
-                    self.log(f'val/top_{k+1}_acc', acc, prog_bar=True)
+                    self.log(f'val/top_{k + 1}_acc', acc, prog_bar=True, sync_dist=True)
 
             # Calculate perplexity
             perplexity = torch.exp(loss_ce)
@@ -220,7 +220,7 @@ class InvFirstTokenModel(BaseLMModel):
                 'val/loss_first_inv': loss_grads,
                 'val/perplexity': perplexity,
                 'val/loss': loss,
-            }, prog_bar=True)
+            }, prog_bar=True, sync_dist=True)
 
         # Ensure that the model has no gradients
         self.model.zero_grad()
