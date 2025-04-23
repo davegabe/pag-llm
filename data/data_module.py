@@ -49,3 +49,11 @@ class LMDataModule(pl.LightningDataModule):
             num_workers=self.config.dataset.num_workers,
             collate_fn=lambda x: x,
         )
+    
+    def test_dataloader(self):
+        return DataLoader(
+            dataset=self.val_dataset, # TODO: Use a separate test dataset if available
+            batch_size=self.config.training.batch_size,
+            num_workers=self.config.dataset.num_workers,
+            collate_fn=lambda x: x,
+        )
