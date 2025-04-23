@@ -124,15 +124,29 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
             # We want that gradients on the masked X will reconstruct the original X
             # ==> We want to ignore the gradients on non-masked/visible tokens
-            padded_masked_x_grads = torch.zeros_like(masked_x_embed)
-            padded_masked_x_grads[mask] = masked_x_grads[mask]
-            padded_x_embed = torch.zeros_like(masked_x_embed)
-            padded_x_embed[mask] = x_embed[mask]
-            loss_grads = F.mse_loss(
-                input=padded_masked_x_grads.view(n * t, d),
-                target=padded_x_embed.view(n * t, d),
-                reduction='sum',
-            ) / n
+            # print(f'mask.shape: {mask.shape}')
+            valid_masked_x_grads = masked_x_grads[mask]
+            target_input_ids = batch.input_ids[mask]
+            # print(f'target_input_ids.shape: {target_input_ids.shape}')
+            # print(f'valid_masked_x_grads.shape: {valid_masked_x_grads.shape}')
+            # assert mask.sum() == target_input_ids.shape[0]
+            # assert torch.all(masked_input_ids[mask] == self.tokenizer.pad_token_id)
+            # assert torch.all(target_input_ids != self.tokenizer.pad_token_id)
+
+            # Apply the model normalization to the gradients
+            valid_masked_x_grads = self.model.model.norm(valid_masked_x_grads)
+
+            assert self.model.lm_head.bias is None
+            valid_input_ids_predicted = F.linear(
+                input=valid_masked_x_grads,
+                weight=self.model.lm_head.weight.clone().detach(),
+            )
+
+            loss_grads = F.cross_entropy(
+                input=valid_input_ids_predicted,
+                target=target_input_ids,
+                reduction='mean',
+            )
         else:
             loss_grads = torch.zeros_like(loss_ce)
 
