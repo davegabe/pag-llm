@@ -103,21 +103,22 @@ class IdentityGradModel(BaseLMModel):
             # Forward pass to get the logits and probabilities
             grad_logits = self._forward_grad_embeddings(grad_x_embed)
 
-            # We want that gradients on the first token will reconstruct the original token
-            assert not input_ids.requires_grad
+            # Consider only the tokens where the attention mask is 1
+            useful_tokens = attention_mask.view(n * t) == 1
+            # We need to reshape the logits and input_ids to match the batch size
+            # assert attention_mask[:, 0].sum() == n
+            grad_logits = grad_logits[:, 0].view(n, v)
+            input_ids = input_ids[:, 0].view(n)
+            assert grad_logits.ndim == 2
+            assert grad_logits.size(0) == input_ids.size(0)
+            assert grad_logits.size(1) == v
+            assert input_ids.ndim == 1
+            # assert input_ids.size(0) == attention_mask[:, 0].sum()
             loss_grads = F.cross_entropy(
-                input=grad_logits.view(n * t, v),
-                target=input_ids.view(n * t),
+                grad_logits,
+                input_ids,
                 reduction='mean'
             )
-            # # Check if all parameters receive gradients after only loss_grads backward
-            # for p in self.model.parameters():
-            #     assert p.grad is None, f"Parameter {p} has gradients before backward"
-            # loss_grads.sum().backward()
-            # for p in self.model.parameters():
-            #     assert p.grad is not None, f"Parameter {p} has no gradient"
-            # print(f"Gradients shape: {self.model.lm_head.weight.grad.shape}")
-            # import sys; sys.exit(0)
         else:
             # We still need to return the loss and gradients for the first token
             loss_grads = torch.zeros_like(loss_ce)
@@ -166,7 +167,5 @@ class IdentityGradModel(BaseLMModel):
                 f'{prefix_tag}/loss': loss,
             }, prog_bar=True, sync_dist=True)
 
-        # Ensure that the model has no gradients
-        self.model.zero_grad()
 
         return loss
