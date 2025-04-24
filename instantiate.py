@@ -78,6 +78,10 @@ def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tupl
     Returns:
         tuple: A tuple containing the loaded model, data module, and model name.
     """
+    # If it fails to import pathlib._local,
+    # it means that the checkpoint was saved with a different version of Python.
+    # More specifically, on laika we have 3.13.
+    # For sure, it does NOT work on 3.10.
     ckpt_data = torch.load(str(path), map_location=device, weights_only=False)
 
     state_dict = ckpt_data['state_dict']
