@@ -133,6 +133,8 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                                                                 labels='dummy',
                                                                 shift_labels=shift_labels,
                                                                 output_hidden_states=False)
+            assert masked_x_embed.requires_grad
+            assert masked_outputs.loss.requires_grad
             masked_x_grads = torch.autograd.grad(masked_outputs.loss,
                                                  [masked_x_embed],
                                                  create_graph=create_graph)[0]
@@ -180,7 +182,8 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         return loss
 
     def validation_step(self, batch: BatchType, batch_idx: int):
-        loss_ce, loss_grads, loss = self._compute_losses(batch)
+        with torch.inference_mode(mode=False):
+            loss_ce, loss_grads, loss = self._compute_losses(batch)
 
         self.log_dict({
             'val/loss_ce': loss_ce,
