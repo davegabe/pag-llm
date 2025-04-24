@@ -91,7 +91,6 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
     ckpt_data = torch.load(str(path), map_location=torch_device, weights_only=False)
 
     state_dict = ckpt_data['state_dict']
-    print(list(state_dict.keys()))
 
     hyper_parameters = ckpt_data['hyper_parameters']
     config: CustomLLMPagConfig = hyper_parameters['config']
