@@ -80,14 +80,27 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         return masked_input_ids, masked_shifted_labels, selection_mask.view(n, -1)
 
-    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+    def _compute_losses(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n, t = batch.input_ids.shape
         assert batch.attention_mask.shape == batch.input_ids.shape
         assert batch.labels is not None, f'Batch should contain the label for the loss function.'
         assert batch.labels.shape == batch.input_ids.shape
 
+        if batch.input_ids.is_inference():
+            input_ids = batch.input_ids.clone()
+            shift_labels = batch.shift_labels.clone()
+            # We need to create gradients for the training step
+            create_graph = False
+        else:
+            # We can use the original batch
+            input_ids = batch.input_ids
+            shift_labels = batch.shift_labels
+            # We need to create gradients for the training step
+            create_graph = True
+
+
         # Get the embeddings of X
-        x_embed = self.model.get_input_embeddings()(batch.input_ids)
+        x_embed = self.model.get_input_embeddings()(input_ids)
         d = x_embed.size(-1)
         assert x_embed.shape == (n, t, d), f'Expected x_embed to be of shape (n, t, d), but got {x_embed.shape}'
 
@@ -95,7 +108,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         outputs: CausalLMOutputWithPast = self.model(inputs_embeds=x_embed,
                                                      attention_mask=batch.attention_mask,
                                                      labels='dummy',
-                                                     shift_labels=batch.shift_labels,
+                                                     shift_labels=shift_labels,
                                                      output_hidden_states=False)
 
         loss_ce = outputs.loss
@@ -119,14 +132,13 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                                                                 output_hidden_states=False)
             masked_x_grads = torch.autograd.grad(masked_outputs.loss,
                                                  [masked_x_embed],
-                                                 create_graph=True,
-                                                 retain_graph=True)[0]
+                                                 create_graph=create_graph)[0]
 
             # We want that gradients on the masked X will reconstruct the original X
             # ==> We want to ignore the gradients on non-masked/visible tokens
             # print(f'mask.shape: {mask.shape}')
             valid_masked_x_grads = masked_x_grads[mask]
-            target_input_ids = batch.input_ids[mask]
+            target_input_ids = input_ids[mask]
             # print(f'target_input_ids.shape: {target_input_ids.shape}')
             # print(f'valid_masked_x_grads.shape: {valid_masked_x_grads.shape}')
             # assert mask.sum() == target_input_ids.shape[0]
@@ -152,9 +164,23 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
+        return loss_ce, loss_grads, loss
+
+    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+        loss_ce, loss_grads, loss = self._compute_losses(batch)
+
         self.log_dict({
             f'{prefix_tag}/loss_ce': loss_ce,
             f'{prefix_tag}/loss_pag': loss_grads,
             f'{prefix_tag}/loss': loss,
         }, prog_bar=True)
         return loss
+
+    def validation_step(self, batch: BatchType, batch_idx: int):
+        loss_ce, loss_grads, loss = self._compute_losses(batch)
+
+        self.log_dict({
+            'val/loss_ce': loss_ce,
+            'val/loss_pag': loss_grads,
+            'val/loss': loss,
+        }, prog_bar=True)
