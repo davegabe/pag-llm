@@ -67,14 +67,14 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     return lightning_model, data_module, model_name
 
 
-def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tuple[
+def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConfig) -> tuple[
     BaseLMModel, LMDataModule, str, CustomLLMPagConfig]:
     """
     Load a model from a checkpoint file.
 
     Args:
         path: Path to the checkpoint file.
-        device: Device to load the model onto (e.g., CPU or CUDA).
+        current_cfg: Current configuration object to get some parameters from the environment.
 
     Returns:
         tuple: A tuple containing the loaded model, data module, model name, and configuration it was trained on.
@@ -83,7 +83,12 @@ def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tupl
     # it means that the checkpoint was saved with a different version of Python.
     # More specifically, on laika we have 3.13.
     # For sure, it does NOT work on 3.10.
-    ckpt_data = torch.load(str(path), map_location=device, weights_only=False)
+    torch_device = 'cpu'
+    if torch.cuda.is_available():
+        torch_device = 'cuda'
+    if current_cfg.training.device is not None:
+        torch_device = f'cuda:{current_cfg.training.device[0]}'
+    ckpt_data = torch.load(str(path), map_location=torch_device, weights_only=False)
 
     state_dict = ckpt_data['state_dict']
     print(list(state_dict.keys()))
@@ -95,6 +100,11 @@ def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tupl
     vocab_size = config.model.vocab_size
     vocab_json_file = config.model.output_dir / f'tokenizer-{vocab_size}.json'
     assert vocab_json_file.exists(), f"Tokenizer JSON file not found: {vocab_json_file}"
+
+    # Update some parameters in the config from the environment
+    config.training.device = current_cfg.training.device
+    config.training.batch_size = current_cfg.training.batch_size
+    config.training.run_evaluation_before_training = current_cfg.training.run_evaluation_before_training
 
     # Instantiate model and data module
     lightning_model, data_module, model_name = instantiate_model_by_config(config)
