@@ -67,7 +67,8 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     return lightning_model, data_module, model_name
 
 
-def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tuple[BaseLMModel, LMDataModule, str]:
+def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tuple[
+    BaseLMModel, LMDataModule, str, CustomLLMPagConfig]:
     """
     Load a model from a checkpoint file.
 
@@ -76,7 +77,7 @@ def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tupl
         device: Device to load the model onto (e.g., CPU or CUDA).
 
     Returns:
-        tuple: A tuple containing the loaded model, data module, and model name.
+        tuple: A tuple containing the loaded model, data module, model name, and configuration it was trained on.
     """
     # If it fails to import pathlib._local,
     # it means that the checkpoint was saved with a different version of Python.
@@ -95,4 +96,4 @@ def load_model_from_checkpoint(path: pathlib.Path, device: torch.device) -> tupl
 
     lightning_model.load_state_dict(state_dict, strict=True)
 
-    return lightning_model, data_module, model_name
+    return lightning_model, data_module, model_name, config
