@@ -7,16 +7,8 @@ from dotenv import load_dotenv
 from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers import WandbLogger
 
-import models.loader as loader
 from config import CustomLLMPagConfig, LLMPagConfig, apply_config
-from data.data_module import LMDataModule
-from models.base_model import BaseLMModel
-from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
-from models.identity_grad_model import IdentityGradModel
-from models.inv_first_token import InvFirstTokenModel
-from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
-from models.pag_hidden_model import PAGHiddenModel
-from utils.index_token_to_dataset_item import DatasetIndexByToken
+from instantiate import instantiate_model_by_config
 
 # Load environment variables
 load_dotenv()
@@ -24,6 +16,7 @@ load_dotenv()
 # Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 
 @apply_config('tiny-train')
 def train(cfg: LLMPagConfig | CustomLLMPagConfig):
@@ -36,53 +29,13 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
 
     # Create output directory
     os.makedirs(cfg.model.output_dir, exist_ok=True)
-    
+
     # Set seed for reproducibility
     pl.seed_everything(444)
 
     # Set float32 matmul precision
     torch.set_float32_matmul_precision('medium')
-    
-    # Load tokenizer and model
-    if isinstance(cfg, CustomLLMPagConfig):
-        model, tokenizer = loader.create_model_and_tokenizer(
-            cfg.dataset,
-            cfg.model
-        )
-        model_name = str(cfg.model.output_dir).split("/")[-1]
-    else:
-        model, tokenizer = loader.load_model_and_tokenizer(
-            cfg.model.pretrained_base,
-            cfg.model.random_initialization,
-            cfg.training.lora
-        )
-        model_name = cfg.model.pretrained_base.split("/")[-1]
 
-    model.train()
-    
-    # Create data module
-    data_module = LMDataModule(cfg, tokenizer)
-    data_module.prepare_data()
-    data_module.setup()
-    
-    # Select the appropriate model based on training method
-    if cfg.training.method == "base":
-        lightning_model = BaseLMModel(model, tokenizer, cfg)
-    elif cfg.training.method == "pag-hidden":
-        # Fetch the index to quickly access samples given the next token
-        dataset_index = DatasetIndexByToken.from_file(cfg.dataset.prefix.dataset_index_path)
-        lightning_model = PAGHiddenModel(model, tokenizer, cfg, dataset_index, data_module.train_dataset)
-    elif cfg.training.method == "pag-identity-embeddings":
-        lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
-    elif cfg.training.method == "pag-mix-identity-score-embeddings":
-        lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
-    elif cfg.training.method == "inv-first":
-        lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
-    elif cfg.training.method == 'identity-grad':
-        lightning_model = IdentityGradModel(model, tokenizer, cfg)
-    else:
-        raise ValueError(f"Unknown training method: {cfg.training.method}")
-    
     # Setup callbacks
     checkpoint_callback = ModelCheckpoint(
         dirpath=cfg.model.output_dir / cfg.training.method,
@@ -93,15 +46,18 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         mode="min",
         save_last=True,
     )
-    
+
     lr_monitor = LearningRateMonitor(logging_interval="step")
-    
+
+    # Instantiate model and data module
+    lightning_model, data_module, model_name = instantiate_model_by_config(cfg)
+
     # Setup logger
     run_name = f"{model_name}-{cfg.training.method}"
-    tags = [ model_name, cfg.training.method, cfg.dataset.name ]
+    tags = [model_name, cfg.training.method, cfg.dataset.name]
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
-        tags += [ f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}" ]
+        tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
 
     wandb_logger = WandbLogger(
         entity='pag-llm-team',
@@ -109,7 +65,7 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         name=run_name,
         tags=tags,
     )
-    
+
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=cfg.training.num_epochs,
@@ -122,7 +78,7 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
         gradient_clip_val=1.0,
     )
-    
+
     # Evaluate model before training
     # TIP: you can remove this execution by passing '+training.run_evaluation_before_training=False' as cmd argument
     # Example:  python train.py +training.run_evaluation_before_training=False
@@ -132,11 +88,12 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
 
     # Train model
     trainer.fit(lightning_model, data_module)
-    
+
     # Save final model
     lightning_model.model.save_pretrained(os.path.join(cfg.model.output_dir, "final"))
-    
+
     logger.info("Training completed!")
+
 
 if __name__ == "__main__":
     train()
