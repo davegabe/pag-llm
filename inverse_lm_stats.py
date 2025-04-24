@@ -3,6 +3,7 @@ from collections import defaultdict
 
 import torch
 import torch.nn.functional as F
+from lightning import Trainer
 from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
@@ -13,7 +14,7 @@ from models.common import compute_top_k_accuracies
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    device, prefix_len = torch.device('cuda:0'), 1
+    device, prefix_len = 'cuda:0', 1
     torch.set_float32_matmul_precision('medium')
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
@@ -22,10 +23,16 @@ def main(cfg: CustomLLMPagConfig):
     )
     lightning_module.to(device)
 
+    print(f'Loaded model: {module_name}, {type(lightning_module)}')
+
+    # Do a forward testing
+    trainer = Trainer(devices='0,')
+    trainer.validate(lightning_module, data_module.test_dataloader())
+
     overall_accuracy = defaultdict(int)
 
-    for batch in tqdm(data_module.val_dataloader()):
-        batch: BatchType = batch.to(device)
+    for batch in tqdm(data_module.train_dataloader()):
+        batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 
         # Get the embeddings of X
