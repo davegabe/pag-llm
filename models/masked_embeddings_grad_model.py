@@ -34,13 +34,13 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
 
     @torch.no_grad()
-    def _create_masked_input_ids(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _create_masked_input_ids(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Create a masked input ids tensor where 10% of the tokens are replaced with [PAD] token.
         We use 10% instead of 15% as in BERT, because it is more difficult to train the model with a task.
 
         :param batch: BatchType, containing input_ids, attention_mask, and labels
-        :return: Tuple of (masked_input_ids, masked_labels, mask)
+        :return: Tuple of (masked_input_ids, mask)
         """
         sample_ratio = 0.1
         pad_token_id = self.tokenizer.pad_token_id
@@ -74,11 +74,14 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         masked_input_ids[selection_mask] = pad_token_id
 
-        # Mask also the labels
-        masked_shifted_labels = batch.shift_labels.clone()
-        masked_shifted_labels[selection_mask] = pad_token_id
+        # We do not need to mask the labels.
+        # Suppose we mask token i-th,
+        # then the label for token i-th is at position shift_labels[i-1].
+        # Since the label is in the past, it won't influence the gradients on token i-th.
+        # This has been tested doing .logits[0][i-1].sum().backward(),
+        # and asserting that inputs_embeds.grad[0][i] == 0.
 
-        return masked_input_ids, masked_shifted_labels, selection_mask.view(n, -1)
+        return masked_input_ids, selection_mask.view(n, -1)
 
     def _compute_losses(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         n, t = batch.input_ids.shape
@@ -115,7 +118,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         if self.current_epoch >= self.warmup_pretrain_epochs:
             # Get the embeddings of masked X
-            masked_input_ids, masked_shifted_labels, mask = self._create_masked_input_ids(batch)
+            masked_input_ids, mask = self._create_masked_input_ids(batch)
             assert masked_input_ids.shape == (n, t), \
                 f'Expected masked_input_ids to be of shape (n, t), but got {masked_input_ids.shape}'
             assert mask.shape == (n, t), \
@@ -128,7 +131,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             masked_outputs: CausalLMOutputWithPast = self.model(inputs_embeds=masked_x_embed,
                                                                 attention_mask=batch.attention_mask,
                                                                 labels='dummy',
-                                                                shift_labels=masked_shifted_labels,
+                                                                shift_labels=shift_labels,
                                                                 output_hidden_states=False)
             masked_x_grads = torch.autograd.grad(masked_outputs.loss,
                                                  [masked_x_embed],
