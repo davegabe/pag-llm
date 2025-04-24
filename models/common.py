@@ -33,6 +33,18 @@ def forward_grad_embeddings(model: PreTrainedModel, grad_x_embed: torch.Tensor) 
 
 def compute_top_k_accuracies(inv_first_label: torch.Tensor, logits: torch.Tensor, k_samples: int, tag: str = 'val') -> \
 dict[str, torch.Tensor]:
+    assert (inv_first_label is None) == (logits is None), \
+        "Either both inv_first_label and logits should be None or neither should be None."
+
+    accuracies: dict[str, torch.Tensor] = dict()
+
+    if inv_first_label is None or logits is None:
+        for k in range(k_samples):
+            accuracies[f'{tag}/{k + 1}_acc'] = torch.tensor(0.0)
+            accuracies[f'{tag}/top_{k + 1}_acc'] = torch.tensor(0.0)
+        return accuracies
+
+
     # Get the probabilities of the model
     probs = F.softmax(logits, dim=-1)  # [batch_size, vocab_size]
 
@@ -46,8 +58,6 @@ dict[str, torch.Tensor]:
     is_in_k_nearest = torch.zeros((n, k_samples), device=logits.device, dtype=torch.bool)  # [batch_size, k]
     for k in range(k_samples):
         is_in_k_nearest[:, k] = (inv_first_label == top_k_indices[:, k])
-
-    accuracies: dict[str, torch.Tensor] = dict()
 
     # Calculate the accuracy on the k-nearest neighbors
     for k in range(k_samples):

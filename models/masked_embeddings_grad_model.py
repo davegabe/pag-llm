@@ -7,6 +7,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
+from models.common import compute_top_k_accuracies
 
 
 class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
@@ -83,7 +84,8 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         return masked_input_ids, selection_mask.view(n, -1)
 
-    def _compute_losses(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _compute_losses(self, batch: BatchType) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         n, t = batch.input_ids.shape
         assert batch.attention_mask.shape == batch.input_ids.shape
         assert batch.labels is not None, f'Batch should contain the label for the loss function.'
@@ -144,6 +146,10 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             # print(f'mask.shape: {mask.shape}')
             valid_masked_x_grads = masked_x_grads[mask]
             target_input_ids = input_ids[mask]
+            assert valid_masked_x_grads.ndim == 2
+            assert valid_masked_x_grads.size(1) == d
+            assert target_input_ids.ndim == 1
+            assert target_input_ids.size(0) == valid_masked_x_grads.size(0)
             # print(f'target_input_ids.shape: {target_input_ids.shape}')
             # print(f'valid_masked_x_grads.shape: {valid_masked_x_grads.shape}')
             # assert mask.sum() == target_input_ids.shape[0]
@@ -166,27 +172,38 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             )
         else:
             loss_grads = torch.zeros_like(loss_ce)
+            target_input_ids = None
+            valid_input_ids_predicted = None
 
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
-        return loss_ce, loss_grads, loss
+        return loss_ce, loss_grads, loss, target_input_ids, valid_input_ids_predicted
 
     def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
-        loss_ce, loss_grads, loss = self._compute_losses(batch)
+        loss_ce, loss_grads, loss, _, _ = self._compute_losses(batch)
 
         self.log_dict({
             f'{prefix_tag}/loss_ce': loss_ce,
             f'{prefix_tag}/loss_pag': loss_grads,
             f'{prefix_tag}/loss': loss,
-        }, prog_bar=True)
+        }, prog_bar=True, sync_dist=True)
         return loss
 
     def validation_step(self, batch: BatchType, batch_idx: int):
         with torch.inference_mode(mode=False):
-            loss_ce, loss_grads, loss = self._compute_losses(batch)
+            loss_ce, loss_grads, loss, target_input_ids, valid_input_ids_predicted = self._compute_losses(batch)
+
+        # Compute the top-k accuracies
+        top_k_accuracies = compute_top_k_accuracies(
+            inv_first_label=target_input_ids,
+            logits=valid_input_ids_predicted,
+            k_samples=4,
+            tag='val'
+        )
+        self.log_dict(top_k_accuracies, sync_dist=True, prog_bar=False)
 
         self.log_dict({
             'val/loss_ce': loss_ce,
             'val/loss_pag': loss_grads,
             'val/loss': loss,
-        }, prog_bar=True)
+        }, prog_bar=True, sync_dist=True)
