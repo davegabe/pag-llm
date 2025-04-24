@@ -52,8 +52,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 - inv_first_label: Original first token labels
         """
         # If first_tokens_to_predict is None, use the default value
-        if first_tokens_to_predict is not None:
-            self.first_tokens_to_predict = first_tokens_to_predict
+        if first_tokens_to_predict is None:
+            first_tokens_to_predict = self.first_tokens_to_predict
 
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
