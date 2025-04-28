@@ -102,7 +102,7 @@ def main(cfg: CustomLLMPagConfig):
             # Replace the k-th token with [PAD]
             # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
             ## Use the unigram
-            input_ids[:, k] = reverse_unigram[input_ids[:, k]]
+            input_ids[:, k] = reverse_unigram[input_ids[:, k + 1]]
 
             # Get the embeddings of X (with the k-th token replaced with [PAD])
             x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
