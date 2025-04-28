@@ -2,6 +2,7 @@ import pathlib
 from collections import defaultdict
 
 import torch
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
@@ -10,18 +11,75 @@ from instantiate import load_model_from_checkpoint
 from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 
+def load_unigram_from_file(unigram_file: pathlib.Path) -> torch.Tensor | None:
+    """
+    Load the unigram from the file.
+    :param unigram_file: Path to the unigram file.
+    :return: Unigram dictionary or None if the file does not exist.
+    """
+    if not unigram_file.exists():
+        return None
+
+    return torch.load(str(unigram_file.resolve()), map_location='cpu')['unigram']
+
+
+def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, prefix_len: int,
+                           unigram_file: pathlib.Path) -> torch.Tensor:
+    distribution_after_token = torch.zeros((vocab_size, vocab_size),
+                                           dtype=torch.int)  # [k+1 token] -> [k token] -> count
+
+    for batch in tqdm(train_dataloader, desc='Building unigram'):
+        for i_sample in range(batch.input_ids.size(0)):
+            for k in range(prefix_len - 1, -1, -1):
+                # Get the k-th token
+                k_token_id = batch.input_ids[i_sample, k]
+
+                # Get the k+1-th token
+                k_plus_1_token_id = batch.input_ids[i_sample, k + 1]
+
+                # Count the occurrences of the k-th and k+1-th tokens
+                distribution_after_token[k_plus_1_token_id, k_token_id] += 1
+
+    # Build the unigram
+    print('Building unigram...')
+    # Find the most frequent token for each (k+1)-th token
+    torch_unigram = torch.argmax(distribution_after_token, dim=1)
+
+    # Save the unigram to the file
+    unigram_file.parent.mkdir(exist_ok=True, parents=True)
+    torch.save({
+        'distribution_after_token': distribution_after_token,
+        'unigram': torch_unigram,
+    }, str(unigram_file.resolve()))
+
+    return torch_unigram
+
+
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
     device, prefix_len = 'cuda:0', 5
     torch.set_float32_matmul_precision('medium')
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
-        pathlib.Path('./checkpoints/tinystories/tinystories_inv_first_norm__9ecoqzxt.ckpt'),
+        cfg.model.output_dir / 'tinystories_identity_grad_norm__qp6q1mop.ckpt',
         cfg,
     )
     lightning_module.to(device)
-
     print(f'Loaded model: {module_name}, {type(lightning_module)}')
+
+    train_unigram_file = cfg.model.output_dir / f'train_unigram_{cfg.model.vocab_size}_{prefix_len}.pt'
+    if train_unigram_file.exists():
+        # Load the unigram from the file
+        reverse_unigram = load_unigram_from_file(train_unigram_file)
+    else:
+        # Build the unigram from the training data
+        reverse_unigram = build_and_save_unigram(data_module.train_dataloader(), cfg.model.vocab_size,
+                                                 prefix_len, train_unigram_file)
+    reverse_unigram = reverse_unigram.to(device)
+
+    ## To always use PAD token as the filler for the unknown token,
+    ## Uncomment the following line:
+    # reverse_unigram = torch.full_like(reverse_unigram, lightning_module.tokenizer.pad_token_id)
 
     # Do a forward testing
     # trainer = Trainer(devices='0,')
@@ -42,7 +100,9 @@ def main(cfg: CustomLLMPagConfig):
             original_k_token = input_ids[:, k].clone()
 
             # Replace the k-th token with [PAD]
-            input_ids[:, k] = lightning_module.tokenizer.pad_token_id
+            # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
+            ## Use the unigram
+            input_ids[:, k] = reverse_unigram[input_ids[:, k]]
 
             # Get the embeddings of X (with the k-th token replaced with [PAD])
             x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
