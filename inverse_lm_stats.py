@@ -2,7 +2,6 @@ import pathlib
 from collections import defaultdict
 
 import torch
-from lightning import Trainer
 from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
@@ -13,7 +12,7 @@ from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    device, prefix_len = 'cuda:0', 1
+    device, prefix_len = 'cuda:0', 5
     torch.set_float32_matmul_precision('medium')
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
@@ -25,13 +24,13 @@ def main(cfg: CustomLLMPagConfig):
     print(f'Loaded model: {module_name}, {type(lightning_module)}')
 
     # Do a forward testing
-    trainer = Trainer(devices='0,')
+    # trainer = Trainer(devices='0,')
     # trainer.validate(lightning_module, data_module.test_dataloader())
 
     overall_accuracy = defaultdict(int)
     lightning_module.eval()
 
-    for batch in tqdm(data_module.val_dataloader()):
+    for batch in tqdm(data_module.val_dataloader(), desc='Inverse LM evaluation'):
         batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 
@@ -53,7 +52,7 @@ def main(cfg: CustomLLMPagConfig):
                 inputs_embeds=x_embed[:, k:],
                 attention_mask=attention_mask[:, k:],
                 labels='dummy',
-                shift_labels=shift_labels[:, k:],
+                shift_labels=shift_labels[:, k:].clone(),  # Required by .view(-1) in PyTorch loss_utils.py internals
             )
             grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, k]
 
@@ -67,14 +66,13 @@ def main(cfg: CustomLLMPagConfig):
             top_k_accuracies = compute_top_k_accuracies(
                 inv_first_label=original_k_token,
                 logits=logits,
-                k_samples=10,
+                k_samples=4,
                 tag='test',
             )
             top_k_accuracies = {k: v for k, v in top_k_accuracies.items() if k.startswith('test/top_')}
 
             for top_k_key, accuracy in top_k_accuracies.items():
-                print(f'{top_k_key}: {accuracy:.2%}')
-                overall_accuracy[top_k_key] += round(accuracy.item() * batch.input_ids.size(0))
+                overall_accuracy[(top_k_key, k)] += round(accuracy.item() * batch.input_ids.size(0))
 
     # Compute the overall accuracy
     for top_k_key, correct_samples in overall_accuracy.items():
