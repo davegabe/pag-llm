@@ -35,11 +35,6 @@ def main(cfg: CustomLLMPagConfig):
         batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 
-        # Send to device
-        input_ids = input_ids.to(device)
-        attention_mask = attention_mask.to(device)
-        shift_labels = shift_labels.to(device)
-
         for k in range(prefix_len - 1, -1, -1):
             # Do a forward pass,
             # letting the model see only the tokens after k-th.
