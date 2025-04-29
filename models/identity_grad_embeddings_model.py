@@ -36,20 +36,22 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
 
-    def _compute_losses(self, batch: BatchType, first_tokens_to_predict: int = None) -> tuple:
+    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str,
+                        first_tokens_to_predict: int = None) -> tuple:
         """
         Compute common losses used in both training and validation steps.
 
         Args:
             batch (BatchType): The batch of data.
+            top_k_samples (int): Number of top-k samples to consider for accuracy.
+            tag (str): Tag for logging.
             first_tokens_to_predict (int): Number of tokens to predict. 
 
         Returns:
             tuple: A tuple containing:
                 - loss_ce: Cross-entropy loss
                 - loss_grads: Gradient-based loss for first token
-                - grad_x_embed: Gradients of embeddings
-                - inv_first_label: Original first token labels
+                - top_k_accuracies: Top-k accuracies, as a dictionary to be logged
         """
         # If first_tokens_to_predict is None, use the default value
         if first_tokens_to_predict is None:
@@ -109,81 +111,73 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 target=inv_first_label,
                 reduction='mean'
             )
+
+            # Compute the top-k accuracies
+            top_k_accuracies = compute_top_k_accuracies(inv_first_label, logits, top_k_samples, tag)
         else:
             # We still need to return the loss and gradients for the first token
-            grad_x_embed = None
             loss_grads = torch.zeros_like(loss_ce)
+            top_k_accuracies = dict()
 
-        return loss_ce, loss_grads, grad_x_embed, inv_first_label
+        return loss_ce, loss_grads, top_k_accuracies
 
-    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
+    def _step(self, batch: BatchType, tag: str) -> torch.Tensor:
+        """
+        Compute the loss and perplexity on the forward pass.
+        Compute also the accuracy of the Inverse First Token task.
+
+        Args:
+            batch (BatchType): The batch of data.
+            tag (str): Tag for logging.
+        """
         # Compute losses using common function
-        loss_ce, loss_grads, _, _ = self._compute_losses(batch)
+        loss_ce, loss_grads, top_k_accuracies = self._compute_losses(
+            batch,
+            self.k_samples,
+            tag,
+        )
 
         # Combine losses
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
+        if len(top_k_accuracies) > 0:
+            # Log the top k accuracies
+            self.log_dict(top_k_accuracies, sync_dist=True)
+
+        # Calculate perplexity
+        perplexity = torch.exp(loss_ce)
         self.log_dict({
-            f'{prefix_tag}/loss_ce': loss_ce,
-            f'{prefix_tag}/loss_first_inv': loss_grads,
-            f'{prefix_tag}/loss': loss,
+            'val/loss_ce': loss_ce,
+            'val/loss_first_inv': loss_grads,
+            'val/perplexity': perplexity,
+            'val/loss': loss,
         }, prog_bar=True, sync_dist=True)
-
-        return loss
-
-    def validation_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'val') -> torch.Tensor:
-        """
-        Compute the validation loss and perplexity on the forward pass.
-        Compute also the accuracy of the Inverse First Token task.
-
-        Args:
-            prefix_tag: Tag prefix
-            batch (BatchType): The batch of data.
-            batch_idx (int): The index of the batch.
-        """
-        with torch.inference_mode(mode=False):
-            # Compute losses using common function
-            loss_ce, loss_grads, grad_x_embed, inv_first_label = self._compute_losses(batch)
-
-            # Combine losses
-            loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
-
-            if grad_x_embed is not None:
-                # Get the logits and probabilities
-                logits = forward_grad_embeddings(self.model, grad_x_embed)
-
-                # Get the top k indices
-                top_k_accuracies = compute_top_k_accuracies(inv_first_label, logits, self.k_samples, tag=prefix_tag)
-                self.log_dict(top_k_accuracies, sync_dist=True)
-
-            # Calculate perplexity
-            perplexity = torch.exp(loss_ce)
-            self.log_dict({
-                'val/loss_ce': loss_ce,
-                'val/loss_first_inv': loss_grads,
-                'val/perplexity': perplexity,
-                'val/loss': loss,
-            }, prog_bar=True, sync_dist=True)
 
         # Ensure that the model has no gradients
         self.model.zero_grad()
 
         return loss
 
-    def test_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'test') -> torch.Tensor:
+    def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        return self._step(batch, 'train')
+
+    def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        with torch.inference_mode(mode=False):
+            return self._step(batch, 'val')
+
+    def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         """
         Compute ability to for Inverse Language Modeling task using masked sequences.
         Compute loss and accuracy on inverse K token task.
 
         Args:
-            prefix_tag: Tag prefix
             batch (BatchType): The batch of data.
             batch_idx (int): The index of the batch.
         """
         for first_tokens_to_predict in range(self.first_tokens_to_predict):
             for mask_value in self.mask_values:
                 # Define the metric prefix
-                exp_prefix = f'{prefix_tag}/m_{mask_value}_t_{first_tokens_to_predict}'
+                exp_prefix = f'test/m_{mask_value}_t_{first_tokens_to_predict}'
 
                 # Mask the first tokens
                 input_ids = batch.input_ids.clone()
@@ -219,4 +213,4 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         
         # Ensure that the model has no gradients
         self.model.zero_grad()
-        return 0
+        return torch.tensor(0.0, device=self.device)
