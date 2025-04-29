@@ -5,6 +5,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from config import LLMPagConfig
 from data.data_processor import BatchType
+from models.common import compute_top_k_accuracies
 
 
 class BaseLMModel(pl.LightningModule):
@@ -50,30 +51,42 @@ class BaseLMModel(pl.LightningModule):
         """Load model state when loading checkpoint"""
         self.model.load_state_dict(checkpoint["model_state"])
 
-    def training_step(self, batch: BatchType, batch_idx: int):
+    def _step(self, batch: BatchType, tag: str) -> torch.Tensor:
         outputs: CausalLMOutputWithPast = self.model(**batch.to_dict())
+
         loss = outputs.loss
         self.log(
-            "train/loss",
+            f"{tag}/loss",
             loss,
             prog_bar=True,
             logger=True,
             sync_dist=True
         )
-        return loss
-
-    def validation_step(self, batch: BatchType, batch_idx: int):
-        outputs = self.model(**batch.to_dict())
-        loss = outputs.loss
-        self.log("val/loss", loss, prog_bar=True, logger=True, sync_dist=True)
 
         # Calculate perplexity
         perplexity = torch.exp(loss)
         self.log(
-            "val/perplexity",
+            f"{tag}/perplexity",
             perplexity,
-            prog_bar=True,
+            prog_bar=False,
             logger=True,
             sync_dist=True
         )
+
+        # Calculate accuracy
+        top_k_accuracies = compute_top_k_accuracies(batch.shift_labels, outputs.logits, k_samples=3, tag=tag)
+        self.log_dict(
+            top_k_accuracies,
+            prog_bar=False,
+            logger=True,
+            sync_dist=True
+        )
+
         return loss
+
+
+    def training_step(self, batch: BatchType, batch_idx: int):
+        return self._step(batch, "train")
+
+    def validation_step(self, batch: BatchType, batch_idx: int):
+        return self._step(batch, "val")
