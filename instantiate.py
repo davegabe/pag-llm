@@ -44,13 +44,15 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     data_module.setup()
 
     # Select the appropriate model based on training method
+    # Some of them have multiple naming conventions, because of old, convoluted, names
+    # left in the saved configuration in the corresponding .ckpt files.
     if cfg.training.method == "base":
         lightning_model = BaseLMModel(model, tokenizer, cfg)
-    elif cfg.training.method == "bert-like":  # Previously known as: "pag-mix-identity-score-embeddings"
+    elif cfg.training.method in ("bert-like", "pag-mix-identity-score-embeddings"):
         lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method == "inv-first":
         lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
-    elif cfg.training.method == 'identity-grad':
+    elif cfg.training.method in ("identity-grad", "pag-identity-embeddings"):
         lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
