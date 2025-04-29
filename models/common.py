@@ -31,6 +31,7 @@ def forward_grad_embeddings(model: PreTrainedModel, grad_x_embed: torch.Tensor) 
     return logits
 
 
+@torch.no_grad()
 def compute_top_k_accuracies(inv_first_label: torch.Tensor, logits: torch.Tensor, k_samples: int, tag: str = 'val') -> \
 dict[str, torch.Tensor]:
     assert (inv_first_label is None) == (logits is None), \
@@ -40,7 +41,7 @@ dict[str, torch.Tensor]:
 
     if inv_first_label is None or logits is None:
         for k in range(k_samples):
-            accuracies[f'{tag}/{k + 1}_acc'] = torch.tensor(0.0)
+            # accuracies[f'{tag}/{k + 1}_acc'] = torch.tensor(0.0)
             accuracies[f'{tag}/top_{k + 1}_acc'] = torch.tensor(0.0)
         return accuracies
 
