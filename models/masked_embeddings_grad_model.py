@@ -84,8 +84,23 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
         return masked_input_ids, selection_mask.view(n, -1)
 
-    def _compute_losses(self, batch: BatchType) -> tuple[
-        torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+        """
+        Compute common losses used in both training and validation steps.
+
+        Args:
+            batch (BatchType): The batch of data.
+            top_k_samples (int): Number of top-k samples to consider for accuracy.
+            tag (str): Tag for logging.
+
+        Returns:
+            tuple: A tuple containing:
+                - loss_ce: Cross-entropy loss
+                - loss_grads: Gradient-based loss for first token
+                - loss: Combined loss with lambda hyperparameters
+                - top_k_accuracies: Top-k accuracies, as a dictionary to be logged
+        """
         n, t = batch.input_ids.shape
         assert batch.attention_mask.shape == batch.input_ids.shape
         assert batch.labels is not None, f'Batch should contain the label for the loss function.'
@@ -143,18 +158,12 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
             # We want that gradients on the masked X will reconstruct the original X
             # ==> We want to ignore the gradients on non-masked/visible tokens
-            # print(f'mask.shape: {mask.shape}')
             valid_masked_x_grads = masked_x_grads[mask]
             target_input_ids = input_ids[mask]
             assert valid_masked_x_grads.ndim == 2
             assert valid_masked_x_grads.size(1) == d
             assert target_input_ids.ndim == 1
             assert target_input_ids.size(0) == valid_masked_x_grads.size(0)
-            # print(f'target_input_ids.shape: {target_input_ids.shape}')
-            # print(f'valid_masked_x_grads.shape: {valid_masked_x_grads.shape}')
-            # assert mask.sum() == target_input_ids.shape[0]
-            # assert torch.all(masked_input_ids[mask] == self.tokenizer.pad_token_id)
-            # assert torch.all(target_input_ids != self.tokenizer.pad_token_id)
 
             # Apply the model normalization to the gradients
             valid_masked_x_grads = self.model.model.norm(valid_masked_x_grads)
@@ -170,40 +179,55 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                 target=target_input_ids,
                 reduction='mean',
             )
+
+            # Compute the top-k accuracies
+            top_k_accuracies = compute_top_k_accuracies(target_input_ids, valid_input_ids_predicted, top_k_samples, tag)
         else:
             loss_grads = torch.zeros_like(loss_ce)
-            target_input_ids = None
-            valid_input_ids_predicted = None
+            top_k_accuracies = dict()
 
+        # Combine losses using the lambda hyperparameters
         loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
-        return loss_ce, loss_grads, loss, target_input_ids, valid_input_ids_predicted
+        return loss_ce, loss_grads, loss, top_k_accuracies
 
-    def training_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'train') -> torch.Tensor:
-        loss_ce, loss_grads, loss, _, _ = self._compute_losses(batch)
+    def _step(self, batch: BatchType, tag: str) -> torch.Tensor:
+        """
+        Compute the loss and perplexity on the forward pass.
+        Compute also the accuracy of the Inverse First Token task.
 
-        self.log_dict({
-            f'{prefix_tag}/loss_ce': loss_ce,
-            f'{prefix_tag}/loss_pag': loss_grads,
-            f'{prefix_tag}/loss': loss,
-        }, prog_bar=True, sync_dist=True)
-        return loss
-
-    def validation_step(self, batch: BatchType, batch_idx: int):
-        with torch.inference_mode(mode=False):
-            loss_ce, loss_grads, loss, target_input_ids, valid_input_ids_predicted = self._compute_losses(batch)
-
-        # Compute the top-k accuracies
-        top_k_accuracies = compute_top_k_accuracies(
-            inv_first_label=target_input_ids,
-            logits=valid_input_ids_predicted,
-            k_samples=4,
-            tag='val'
+        Args:
+            batch (BatchType): The batch of data.
+            tag (str): Tag for logging.
+        """
+        # Compute losses using common function
+        loss_ce, loss_grads, loss, top_k_accuracies = self._compute_losses(
+            batch,
+            self.k_samples,
+            tag,
         )
-        self.log_dict(top_k_accuracies, sync_dist=True, prog_bar=False)
 
+        if len(top_k_accuracies) > 0:
+            # Log the top k accuracies
+            self.log_dict(top_k_accuracies, sync_dist=True)
+
+        # Calculate perplexity
+        perplexity = torch.exp(loss_ce)
         self.log_dict({
             'val/loss_ce': loss_ce,
-            'val/loss_pag': loss_grads,
+            'val/loss_mask': loss_grads,
+            'val/perplexity': perplexity,
             'val/loss': loss,
         }, prog_bar=True, sync_dist=True)
+
+        # Ensure that the model has no gradients
+        self.model.zero_grad()
+
+        return loss
+
+    def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        return self._step(batch, 'train')
+
+    def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        with torch.inference_mode(mode=False):
+            return self._step(batch, 'val')
