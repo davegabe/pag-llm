@@ -57,7 +57,7 @@ def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, prefix
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    device, prefix_len = 'cuda:0', 5
+    device, prefix_len = 'cuda:3', 5
     torch.set_float32_matmul_precision('medium')
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
