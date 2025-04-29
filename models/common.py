@@ -40,17 +40,13 @@ dict[str, torch.Tensor]:
     accuracies: dict[str, torch.Tensor] = dict()
 
     if inv_first_label is None or logits is None:
-        for k in range(k_samples):
-            # accuracies[f'{tag}/{k + 1}_acc'] = torch.tensor(0.0)
-            accuracies[f'{tag}/top_{k + 1}_acc'] = torch.tensor(0.0)
-        return accuracies
+        return dict()
 
-
-    # Get the probabilities of the model
-    probs = F.softmax(logits, dim=-1)  # [batch_size, vocab_size]
 
     # Get the top k indices
-    _, top_k_indices = torch.topk(probs, k_samples, dim=-1, largest=True, sorted=False)  # [batch_size, k]
+    _, top_k_indices = torch.topk(logits, k_samples, dim=-1, largest=True, sorted=False)  # [batch_size, k]
+    assert top_k_indices.shape == (logits.size(0), k_samples), \
+        f"Expected top_k_indices to be of shape (batch_size, k), but got {top_k_indices.shape}"
 
     # Get the batch size
     n = logits.size(0)
@@ -63,8 +59,8 @@ dict[str, torch.Tensor]:
     # Calculate the accuracy on the k-nearest neighbors
     for k in range(k_samples):
         # Log the accuracy at exact k position
-        acc = is_in_k_nearest[:, k].float().mean()
-        accuracies[f'{tag}/{k + 1}_acc'] = acc
+        # acc = is_in_k_nearest[:, k].float().mean()
+        # accuracies[f'{tag}/{k + 1}_acc'] = acc
 
         # Log the accuracy for the first k positions
         acc = is_in_k_nearest[:, :k + 1].any(dim=1).float().mean()

@@ -11,7 +11,7 @@ from instantiate import load_model_from_checkpoint
 from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 
-def load_bigram_from_file(bigram_file: pathlib.Path) -> torch.Tensor | None:
+def load_bigram_from_file(bigram_file: pathlib.Path) -> tuple[torch.Tensor, torch.Tensor] | None:
     """
     Load the bigram from the file.
     :param bigram_file: Path to the bigram file.
@@ -21,11 +21,15 @@ def load_bigram_from_file(bigram_file: pathlib.Path) -> torch.Tensor | None:
         return None
 
     loaded_file = torch.load(str(bigram_file.resolve()), map_location='cpu')
+
     # Use 'unigram' for backward compatibility with an older, wrong, naming convention
-    return loaded_file['bigram'] or loaded_file['unigram']
+    reverse_bigram = loaded_file.get('bigram') or loaded_file['unigram']
+    bigram_counts = loaded_file['distribution_after_token']
+    return reverse_bigram, bigram_counts
 
 
-def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_file: pathlib.Path) -> torch.Tensor:
+def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_file: pathlib.Path) -> tuple[
+    torch.Tensor, torch.Tensor]:
     distribution_after_token = torch.zeros((vocab_size, vocab_size),
                                            dtype=torch.int)  # [k+1 token] -> [k token] -> count
 
@@ -54,16 +58,16 @@ def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_
         'bigram': torch_bigram,
     }, str(bigram_file.resolve()))
 
-    return torch_bigram
+    return torch_bigram, distribution_after_token
 
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    device, prefix_len = 'cuda:3', 5
+    device, prefix_len = 'cuda:2', 5
     torch.set_float32_matmul_precision('medium')
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
-        cfg.model.output_dir / 'tinystories_identity_grad_norm__qp6q1mop.ckpt',
+        cfg.model.output_dir / 'tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
         cfg,
     )
     lightning_module.to(device)
@@ -72,16 +76,16 @@ def main(cfg: CustomLLMPagConfig):
     train_bigram_file = cfg.model.output_dir / f'train_bigram_{cfg.model.vocab_size}_full.pt'
     if train_bigram_file.exists():
         # Load the bigram from the file
-        reverse_bigram = load_bigram_from_file(train_bigram_file)
+        reverse_bigram, bigram_counts = load_bigram_from_file(train_bigram_file)
     else:
         # Build the bigram from the training data
-        reverse_bigram = build_and_save_bigram(data_module.train_dataloader(), cfg.model.vocab_size,
-                                               train_bigram_file)
-    reverse_bigram = reverse_bigram.to(device)
+        reverse_bigram, bigram_counts = build_and_save_bigram(data_module.train_dataloader(),
+                                                              cfg.model.vocab_size, train_bigram_file)
+    reverse_bigram, bigram_counts = map(lambda x: x.to(device), (reverse_bigram, bigram_counts))
 
     ## To always use PAD token as the filler for the unknown token,
     ## Uncomment the following line:
-    # reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
+    reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
 
     # Do a forward testing
     # trainer = Trainer(devices='0,')
@@ -104,7 +108,8 @@ def main(cfg: CustomLLMPagConfig):
             # Replace the k-th token with [PAD]
             # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
             ## Use the bigram
-            input_ids[:, k] = reverse_bigram[input_ids[:, k + 1]]
+            next_token = input_ids[:, k + 1]
+            input_ids[:, k] = reverse_bigram[next_token]
 
             # Get the embeddings of X (with the k-th token replaced with [PAD])
             x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
@@ -125,16 +130,28 @@ def main(cfg: CustomLLMPagConfig):
             logits = forward_grad_embeddings(lightning_module.model, grad_x_embed)
 
             # Compute the top-k accuracies
-            top_k_accuracies = compute_top_k_accuracies(
+            grad_top_k_accuracies = compute_top_k_accuracies(
                 inv_first_label=original_k_token,
                 logits=logits,
                 k_samples=4,
-                tag='test',
+                tag='test_inverse_lm',
             )
-            top_k_accuracies = {k: v for k, v in top_k_accuracies.items() if k.startswith('test/top_')}
 
+            # Compute the top-k accuracies of the bigram
+            bigram_logits = bigram_counts[next_token].float()
+            bigram_top_k_accuracies = compute_top_k_accuracies(
+                inv_first_label=original_k_token,
+                logits=bigram_logits,
+                k_samples=4,
+                tag='test_bigram',
+            )
+
+            # Combine the accuracies to be logged later on
+            top_k_accuracies = bigram_top_k_accuracies | grad_top_k_accuracies  # Python 3.9+ dict union
+            top_k_accuracies = {k: v for k, v in top_k_accuracies.items() if '/top_' in k}
             for top_k_key, accuracy in top_k_accuracies.items():
-                overall_accuracy[(top_k_key, k)] += round(accuracy.item() * batch.input_ids.size(0))
+                overall_accuracy[(top_k_key, k)] += round((accuracy * batch.input_ids.size(0)).item())
+
 
     # Compute the overall accuracy
     for top_k_key, correct_samples in overall_accuracy.items():
