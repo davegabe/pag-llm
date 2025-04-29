@@ -7,11 +7,8 @@ from config import LLMPagConfig, CustomLLMPagConfig
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
 from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
-from models.identity_grad_model import IdentityGradModel
 from models.inv_first_token import InvFirstTokenModel
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
-from models.pag_hidden_model import PAGHiddenModel
-from utils.index_token_to_dataset_item import DatasetIndexByToken
 
 
 def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple[BaseLMModel, LMDataModule, str]:
@@ -49,18 +46,12 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     # Select the appropriate model based on training method
     if cfg.training.method == "base":
         lightning_model = BaseLMModel(model, tokenizer, cfg)
-    elif cfg.training.method == "pag-hidden":
-        # Fetch the index to quickly access samples given the next token
-        dataset_index = DatasetIndexByToken.from_file(cfg.dataset.prefix.dataset_index_path)
-        lightning_model = PAGHiddenModel(model, tokenizer, cfg, dataset_index, data_module.train_dataset)
-    elif cfg.training.method == "pag-identity-embeddings":
-        lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
-    elif cfg.training.method == "pag-mix-identity-score-embeddings":
+    elif cfg.training.method == "bert-like":  # Previously known as: "pag-mix-identity-score-embeddings"
         lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method == "inv-first":
         lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
     elif cfg.training.method == 'identity-grad':
-        lightning_model = IdentityGradModel(model, tokenizer, cfg)
+        lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
 
