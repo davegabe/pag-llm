@@ -11,23 +11,25 @@ from instantiate import load_model_from_checkpoint
 from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 
-def load_unigram_from_file(unigram_file: pathlib.Path) -> torch.Tensor | None:
+def load_bigram_from_file(bigram_file: pathlib.Path) -> torch.Tensor | None:
     """
-    Load the unigram from the file.
-    :param unigram_file: Path to the unigram file.
-    :return: Unigram dictionary or None if the file does not exist.
+    Load the bigram from the file.
+    :param bigram_file: Path to the bigram file.
+    :return: bigram dictionary or None if the file does not exist.
     """
-    if not unigram_file.exists():
+    if not bigram_file.exists():
         return None
 
-    return torch.load(str(unigram_file.resolve()), map_location='cpu')['unigram']
+    loaded_file = torch.load(str(bigram_file.resolve()), map_location='cpu')
+    # Use 'unigram' for backward compatibility with an older, wrong, naming convention
+    return loaded_file['bigram'] or loaded_file['unigram']
 
 
-def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, unigram_file: pathlib.Path) -> torch.Tensor:
+def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_file: pathlib.Path) -> torch.Tensor:
     distribution_after_token = torch.zeros((vocab_size, vocab_size),
                                            dtype=torch.int)  # [k+1 token] -> [k token] -> count
 
-    for batch in tqdm(train_dataloader, desc='Building unigram'):
+    for batch in tqdm(train_dataloader, desc='Building bigram'):
         for i_sample in range(batch.input_ids.size(0)):
             sample_len = batch.attention_mask[i_sample].sum().item()
             for k in range(sample_len - 1, 0, -1):
@@ -40,19 +42,19 @@ def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, unigra
                 # Count the occurrences of the k-th and (k-1)-th tokens
                 distribution_after_token[k_token_id, k_minus_one_token_id] += 1
 
-    # Build the unigram
-    print('Building unigram...')
+    # Build the bigram
+    print('Building bigram...')
     # Find the most frequent token for each (k+1)-th token
-    torch_unigram = torch.argmax(distribution_after_token, dim=1)
+    torch_bigram = torch.argmax(distribution_after_token, dim=1)
 
-    # Save the unigram to the file
-    unigram_file.parent.mkdir(exist_ok=True, parents=True)
+    # Save the bigram to the file
+    bigram_file.parent.mkdir(exist_ok=True, parents=True)
     torch.save({
         'distribution_after_token': distribution_after_token,
-        'unigram': torch_unigram,
-    }, str(unigram_file.resolve()))
+        'bigram': torch_bigram,
+    }, str(bigram_file.resolve()))
 
-    return torch_unigram
+    return torch_bigram
 
 
 @apply_config('inv-first-tiny-train')
@@ -67,19 +69,19 @@ def main(cfg: CustomLLMPagConfig):
     lightning_module.to(device)
     print(f'Loaded model: {module_name}, {type(lightning_module)}')
 
-    train_unigram_file = cfg.model.output_dir / f'train_unigram_{cfg.model.vocab_size}_full.pt'
-    if train_unigram_file.exists():
-        # Load the unigram from the file
-        reverse_unigram = load_unigram_from_file(train_unigram_file)
+    train_bigram_file = cfg.model.output_dir / f'train_bigram_{cfg.model.vocab_size}_full.pt'
+    if train_bigram_file.exists():
+        # Load the bigram from the file
+        reverse_bigram = load_bigram_from_file(train_bigram_file)
     else:
-        # Build the unigram from the training data
-        reverse_unigram = build_and_save_unigram(data_module.train_dataloader(), cfg.model.vocab_size,
-                                                 train_unigram_file)
-    reverse_unigram = reverse_unigram.to(device)
+        # Build the bigram from the training data
+        reverse_bigram = build_and_save_bigram(data_module.train_dataloader(), cfg.model.vocab_size,
+                                               train_bigram_file)
+    reverse_bigram = reverse_bigram.to(device)
 
     ## To always use PAD token as the filler for the unknown token,
     ## Uncomment the following line:
-    # reverse_unigram = torch.full_like(reverse_unigram, lightning_module.tokenizer.pad_token_id)
+    # reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
 
     # Do a forward testing
     # trainer = Trainer(devices='0,')
@@ -101,8 +103,8 @@ def main(cfg: CustomLLMPagConfig):
 
             # Replace the k-th token with [PAD]
             # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
-            ## Use the unigram
-            input_ids[:, k] = reverse_unigram[input_ids[:, k + 1]]
+            ## Use the bigram
+            input_ids[:, k] = reverse_bigram[input_ids[:, k + 1]]
 
             # Get the embeddings of X (with the k-th token replaced with [PAD])
             x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
