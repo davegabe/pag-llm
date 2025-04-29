@@ -35,7 +35,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
 
-    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple:
+    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
+        torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """
         Compute common losses used in both training and validation steps.
 
@@ -48,6 +49,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             tuple: A tuple containing:
                 - loss_ce: Cross-entropy loss
                 - loss_grads: Gradient-based loss for first token
+                - loss: Combined loss with lambda hyperparameters
                 - top_k_accuracies: Top-k accuracies, as a dictionary to be logged
         """
 
@@ -114,7 +116,10 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             loss_grads = torch.zeros_like(loss_ce)
             top_k_accuracies = dict()
 
-        return loss_ce, loss_grads, top_k_accuracies
+        # Combine losses using the lambda hyperparameters
+        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
+
+        return loss_ce, loss_grads, loss, top_k_accuracies
 
     def _step(self, batch: BatchType, tag: str) -> torch.Tensor:
         """
@@ -126,14 +131,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             tag (str): Tag for logging.
         """
         # Compute losses using common function
-        loss_ce, loss_grads, top_k_accuracies = self._compute_losses(
+        loss_ce, loss_grads, loss, top_k_accuracies = self._compute_losses(
             batch,
             self.k_samples,
             tag,
         )
-
-        # Combine losses
-        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
         if len(top_k_accuracies) > 0:
             # Log the top k accuracies
@@ -181,26 +183,13 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
                 with torch.inference_mode(mode=False):
                     # Compute losses using common function
-                    loss_ce, loss_grads, grad_x_embed, inv_first_label = self._compute_losses(
+                    loss_ce, loss_grads, loss, top_k_accuracies = self._compute_losses(
                         batch,
-                        first_tokens_to_predict
+                        first_tokens_to_predict,
+                        tag='test',
                     )
 
-                    # Combine losses
-                    loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
-
-                    if grad_x_embed is not None:
-                        # Get the logits and probabilities
-                        logits = forward_grad_embeddings(self.model, grad_x_embed)
-
-                        # Get the top k indices
-                        top_k_accuracies = compute_top_k_accuracies(
-                            inv_first_label,
-                            logits,
-                            self.k_samples,
-                            tag=exp_prefix
-                        )
-                        self.log_dict(top_k_accuracies, sync_dist=True)
+                    self.log_dict(top_k_accuracies, sync_dist=True, prog_bar=False)
                     
                     self.log_dict({
                         f'{exp_prefix}/loss_inv': loss_grads,
