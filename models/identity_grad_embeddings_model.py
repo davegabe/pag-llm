@@ -22,7 +22,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
         self.k_samples = 3
-        self.first_tokens_to_predict = 15
         self.mask_values = [
             tokenizer.mask_token_id,
             tokenizer.pad_token_id,
@@ -36,8 +35,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
 
-    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str,
-                        first_tokens_to_predict: int = None) -> tuple:
+    def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple:
         """
         Compute common losses used in both training and validation steps.
 
@@ -45,7 +43,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             batch (BatchType): The batch of data.
             top_k_samples (int): Number of top-k samples to consider for accuracy.
             tag (str): Tag for logging.
-            first_tokens_to_predict (int): Number of tokens to predict. 
 
         Returns:
             tuple: A tuple containing:
@@ -53,9 +50,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 - loss_grads: Gradient-based loss for first token
                 - top_k_accuracies: Top-k accuracies, as a dictionary to be logged
         """
-        # If first_tokens_to_predict is None, use the default value
-        if first_tokens_to_predict is None:
-            first_tokens_to_predict = self.first_tokens_to_predict
 
         if batch.input_ids.is_inference():
             # Clone inputs to avoid inference mode issues (caused by Lightning)
@@ -87,33 +81,34 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         )
         loss_ce = outputs.loss
 
-        # Get the embedding of the first tokens (They have not been masked)
-        inv_first_label = batch.input_ids[:, :first_tokens_to_predict].clone()
-        tot_tokens, hidden_dim = input_ids.size(0) * first_tokens_to_predict, x_embed.size(-1)
-        inv_first_label = inv_first_label.view(tot_tokens)  # They must be flattened
+        # Get the embedding of the tokens (They have not been masked)
+        valid_tokens = batch.input_ids[batch.attention_mask == 1]  # They must be flattened
+        assert valid_tokens.ndim == 1, \
+            f'Expected valid_tokens to be of shape (n\', ), but got {valid_tokens.shape}'
 
         # Calculate gradient-based loss if we're past the warmup period
         if self.current_epoch >= self.warmup_pretrain_epochs:
             # Get the gradients on the first token
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
-            grad_x_embed = grad_x_embed[:, :first_tokens_to_predict, :]
-
-            # Flatten all the gradients
-            grad_x_embed = grad_x_embed.reshape(tot_tokens, hidden_dim)
+            # Take only the valid gradients
+            grad_x_embed = grad_x_embed[batch.attention_mask == 1]
+            assert grad_x_embed.shape == (valid_tokens.size(), x_embed.size(-1)), \
+                f'Expected grad_x_embed to be of shape (n\', d), but got {grad_x_embed.shape}'
 
             # Forward pass to get the logits and probabilities
             logits = forward_grad_embeddings(self.model, grad_x_embed)
-            assert logits.shape == (tot_tokens, self.model.config.vocab_size)
+            assert logits.shape == (valid_tokens.size(), self.model.config.vocab_size), \
+                f'Expected logits to be of shape (n\', vocab_size), but got {logits.shape}'
 
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
                 input=logits,
-                target=inv_first_label,
+                target=valid_tokens,
                 reduction='mean'
             )
 
             # Compute the top-k accuracies
-            top_k_accuracies = compute_top_k_accuracies(inv_first_label, logits, top_k_samples, tag)
+            top_k_accuracies = compute_top_k_accuracies(valid_tokens, logits, top_k_samples, tag)
         else:
             # We still need to return the loss and gradients for the first token
             loss_grads = torch.zeros_like(loss_ce)
