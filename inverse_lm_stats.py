@@ -23,22 +23,22 @@ def load_unigram_from_file(unigram_file: pathlib.Path) -> torch.Tensor | None:
     return torch.load(str(unigram_file.resolve()), map_location='cpu')['unigram']
 
 
-def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, prefix_len: int,
-                           unigram_file: pathlib.Path) -> torch.Tensor:
+def build_and_save_unigram(train_dataloader: DataLoader, vocab_size: int, unigram_file: pathlib.Path) -> torch.Tensor:
     distribution_after_token = torch.zeros((vocab_size, vocab_size),
                                            dtype=torch.int)  # [k+1 token] -> [k token] -> count
 
     for batch in tqdm(train_dataloader, desc='Building unigram'):
         for i_sample in range(batch.input_ids.size(0)):
-            for k in range(prefix_len - 1, -1, -1):
+            sample_len = batch.attention_mask[i_sample].sum().item()
+            for k in range(sample_len - 1, 0, -1):
                 # Get the k-th token
                 k_token_id = batch.input_ids[i_sample, k]
 
                 # Get the k+1-th token
-                k_plus_1_token_id = batch.input_ids[i_sample, k + 1]
+                k_minus_one_token_id = batch.input_ids[i_sample, k - 1]
 
-                # Count the occurrences of the k-th and k+1-th tokens
-                distribution_after_token[k_plus_1_token_id, k_token_id] += 1
+                # Count the occurrences of the k-th and (k-1)-th tokens
+                distribution_after_token[k_token_id, k_minus_one_token_id] += 1
 
     # Build the unigram
     print('Building unigram...')
@@ -67,14 +67,14 @@ def main(cfg: CustomLLMPagConfig):
     lightning_module.to(device)
     print(f'Loaded model: {module_name}, {type(lightning_module)}')
 
-    train_unigram_file = cfg.model.output_dir / f'train_unigram_{cfg.model.vocab_size}_{prefix_len}.pt'
+    train_unigram_file = cfg.model.output_dir / f'train_unigram_{cfg.model.vocab_size}_full.pt'
     if train_unigram_file.exists():
         # Load the unigram from the file
         reverse_unigram = load_unigram_from_file(train_unigram_file)
     else:
         # Build the unigram from the training data
         reverse_unigram = build_and_save_unigram(data_module.train_dataloader(), cfg.model.vocab_size,
-                                                 prefix_len, train_unigram_file)
+                                                 train_unigram_file)
     reverse_unigram = reverse_unigram.to(device)
 
     ## To always use PAD token as the filler for the unknown token,
