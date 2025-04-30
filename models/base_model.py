@@ -74,7 +74,18 @@ class BaseLMModel(pl.LightningModule):
         )
 
         # Calculate accuracy
-        top_k_accuracies = compute_top_k_accuracies(batch.shift_labels, outputs.logits, k_samples=3, tag=tag)
+        n, t = batch.input_ids.shape
+        v = self.tokenizer.vocab_size
+
+        assert batch.shift_labels.shape == (n, t), \
+            f"Expected batch.shift_labels to be of shape (n, t), but got {batch.shift_labels.shape}"
+        target_first_labels = batch.shift_labels[batch.attention_mask == 1]
+
+        assert outputs.logits.shape == (n, t, v), \
+            f"Expected outputs.logits to be of shape (n, t, v), but got {outputs.logits.shape}"
+        logits = outputs.logits[batch.attention_mask == 1]
+
+        top_k_accuracies = compute_top_k_accuracies(target_first_labels, logits, k_samples=3, tag=tag)
         self.log_dict(
             top_k_accuracies,
             prog_bar=False,
