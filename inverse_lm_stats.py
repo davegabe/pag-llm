@@ -61,17 +61,27 @@ def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_
     return torch_bigram, distribution_after_token
 
 
-@apply_config('inv-first-tiny-train')
-def main(cfg: CustomLLMPagConfig):
-    device, prefix_len = 'cuda:2', 5
+def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
     torch.set_float32_matmul_precision('medium')
 
+    # Decide the strategy for the init
+    allowed_init = {'bigram', 'random', 'pad'}
+    assert use_init in allowed_init, \
+        f'Invalid initialization strategy: {use_init}. Allowed values are: {allowed_init}'
+
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
-        cfg.model.output_dir / 'tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
+        cfg.model.output_dir / ckpt_file,
         cfg,
     )
     lightning_module.to(device)
-    print(f'Loaded model: {module_name}, {type(lightning_module)}')
+
+    model_class_name = lightning_module.__class__.__name__
+
+    print()
+    print("TESTING INVERSE LM")
+    print(" - Model: ", model_class_name)
+    print(" - Init strategy: ", use_init.upper())
+    print()
 
     train_bigram_file = cfg.model.output_dir / f'train_bigram_{cfg.model.vocab_size}_full.pt'
     if train_bigram_file.exists():
@@ -83,9 +93,9 @@ def main(cfg: CustomLLMPagConfig):
                                                               cfg.model.vocab_size, train_bigram_file)
     reverse_bigram, bigram_counts = map(lambda x: x.to(device), (reverse_bigram, bigram_counts))
 
-    ## To always use PAD token as the filler for the unknown token,
-    ## Uncomment the following line:
-    reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
+    # To always use PAD token as the filler for the unknown token:
+    if use_init == 'pad':
+        reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
 
     # Do a forward testing
     # trainer = Trainer(devices='0,')
@@ -110,6 +120,10 @@ def main(cfg: CustomLLMPagConfig):
             ## Use the bigram
             next_token = input_ids[:, k + 1]
             input_ids[:, k] = reverse_bigram[next_token]
+
+            ## To use a random initialization for the unknown token:
+            if use_init == 'random':
+                input_ids[:, k] = torch.randint_like(input_ids[:, k], 0, lightning_module.tokenizer.vocab_size)
 
             # Get the embeddings of X (with the k-th token replaced with [PAD])
             x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
@@ -138,25 +152,41 @@ def main(cfg: CustomLLMPagConfig):
             )
 
             # Compute the top-k accuracies of the bigram
-            bigram_logits = bigram_counts[next_token].float()
-            bigram_top_k_accuracies = compute_top_k_accuracies(
-                inv_first_label=original_k_token,
-                logits=bigram_logits,
-                k_samples=4,
-                tag='test_bigram',
-            )
+            if use_init == 'bigram':
+                bigram_logits = bigram_counts[next_token].float()
+                bigram_top_k_accuracies = compute_top_k_accuracies(
+                    inv_first_label=original_k_token,
+                    logits=bigram_logits,
+                    k_samples=4,
+                    tag='test_bigram',
+                )
 
-            # Combine the accuracies to be logged later on
-            top_k_accuracies = bigram_top_k_accuracies | grad_top_k_accuracies  # Python 3.9+ dict union
+                # Combine the accuracies to be logged later on
+                top_k_accuracies = bigram_top_k_accuracies | grad_top_k_accuracies  # Python 3.9+ dict union
+            else:
+                top_k_accuracies = grad_top_k_accuracies
+
             top_k_accuracies = {k: v for k, v in top_k_accuracies.items() if '/top_' in k}
             for top_k_key, accuracy in top_k_accuracies.items():
                 overall_accuracy[(top_k_key, k)] += round((accuracy * batch.input_ids.size(0)).item())
 
-
     # Compute the overall accuracy
-    for top_k_key, correct_samples in overall_accuracy.items():
-        top_k_accuracy = correct_samples / len(data_module.val_dataset)
-        print(f'{top_k_key}: {top_k_accuracy:.2%}')
+    output_file = cfg.model.output_dir / f'inverse_lm_accuracy_{model_class_name}_{use_init}_{cfg.model.vocab_size}.txt'
+    with output_file.open('w') as f:
+        for top_k_key, correct_samples in overall_accuracy.items():
+            top_k_accuracy = correct_samples / len(data_module.val_dataset)
+            display_string = f'{top_k_key}: {top_k_accuracy:.2%}'
+            print(display_string)
+            f.write(display_string)
+
+
+@apply_config('inv-first-tiny-train')
+def main(cfg: CustomLLMPagConfig):
+    run_evaluation(device='cuda:2',
+                   prefix_len=5,
+                   use_init='random',
+                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
+                   cfg=cfg)
 
 
 if __name__ == '__main__':
