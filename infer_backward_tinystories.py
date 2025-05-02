@@ -228,7 +228,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
     lightning_module.eval()
 
-    batch: BatchType = next(iter(data_module.val_dataloader())).to(torch.device(device))
+    batch: BatchType = next(iter(data_module.val_dataloader(shuffle=True))).to(torch.device(device))
 
     input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
     t = input_ids.size(-1)
@@ -315,10 +315,10 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:2',
-                   k_samples=10,
-                   skip_prefix_tokens=10,
+                   k_samples=10,  # How many samples to take from the dataset
+                   skip_prefix_tokens=10,  # How many tokens to skip entirely
                    beam_size=20,
-                   prefix_len=10,
+                   prefix_len=5,  # How many tokens to predict
                    use_init='pad',
                    ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
                    cfg=cfg)

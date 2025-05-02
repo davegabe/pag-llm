@@ -41,13 +41,14 @@ class LMDataModule(pl.LightningDataModule):
             num_workers=self.config.dataset.num_workers,
             collate_fn=lambda x: x,
         )
-    
-    def val_dataloader(self):
+
+    def val_dataloader(self, shuffle: bool = False):
         return DataLoader(
             self.val_dataset,
             batch_size=self.config.training.batch_size,
             num_workers=self.config.dataset.num_workers,
             collate_fn=lambda x: x,
+            shuffle=shuffle,
         )
     
     def test_dataloader(self):
