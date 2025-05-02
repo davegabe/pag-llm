@@ -1,138 +1,327 @@
 import torch
-from tqdm import tqdm
-from transformers.modeling_outputs import CausalLMOutputWithPast
+from torch.nn import CrossEntropyLoss
 
-from config import apply_config, CustomLLMPagConfig, LLMPagConfig
-from data.data_module import LMDataModule
+from config import CustomLLMPagConfig, apply_config
 from data.data_processor import BatchType
-from infer_tinystories import load_model
-from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
+from inverse_lm_stats import init_evaluation
+from models.base_model import BaseLMModel
+from models.common import forward_grad_embeddings
 
 
-def sim_matrix(a, b, eps=1e-8):
-    """
-    torch.cdist, but with cosine similarity
-
-    Source: https://stackoverflow.com/a/67588366
-    """
-    a_n, b_n = a.norm(dim=1)[:, None], b.norm(dim=1)[:, None]
-    a_norm = a / torch.clamp(a_n, min=eps)
-    b_norm = b / torch.clamp(b_n, min=eps)
-    sim_mt = torch.mm(a_norm, b_norm.transpose(0, 1))
-    return sim_mt
-
-
-@apply_config('tiny-train')
 @torch.no_grad()
-def main(cfg: CustomLLMPagConfig | LLMPagConfig):
-    lightning_model = load_model(cfg)
-    assert isinstance(lightning_model, MaskedIdentityGradEmbeddingsModel), \
-        f'Model is not MaskedIdentityGradEmbeddingsModel, but {type(lightning_model)}'
+def backward_infer_prefix(lightning_module: BaseLMModel,
+                          use_init: str,
+                          reverse_bigram: torch.Tensor | None,
+                          suffix_input_ids: torch.Tensor,
+                          suffix_attention_mask: torch.Tensor,
+                          beam_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Perform backward inference on the given suffix input IDs and attention mask.
 
-    assert lightning_model.tokenizer.padding_side == 'right', \
-        f'Expected tokenizer padding side to be right, but got {lightning_model.tokenizer.padding_side}'
+    Args:
+        lightning_module (BaseLMModel): The model to use for inference.
+        use_init (str): The initialization strategy to use ('bigram', 'random', or 'pad').
+        reverse_bigram (torch.Tensor): The reverse bigram tensor. Required for 'bigram' initialization.
+        suffix_input_ids (torch.Tensor): The input IDs of the suffix.
+        suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
+        beam_size (int): The beam size for the inference.
 
-    v, d = lightning_model.tokenizer.vocab_size, lightning_model.model.config.hidden_size
-    assert v == 2048, \
-        f'Expected vocab size to be 2048, but got {v}'
-    assert d == 128, \
-        f'Expected hidden size to be 128, but got {d}'
+    Returns:
+        torch.Tensor: The updated input IDs with the predicted token at the first position.
+        torch.Tensor: The updated attention mask with the first position set to 1.
+    """
+    assert reverse_bigram is not None or use_init != 'bigram', \
+        'reverse_bigram must be provided for bigram initialization'
 
-    top_k_for_accuracy = 200
+    assert suffix_input_ids.shape == suffix_attention_mask.shape
+    if suffix_input_ids.ndim == 1:
+        # If the input is a single sentence, add a batch dimension
+        suffix_input_ids = suffix_input_ids.unsqueeze(0)
+        suffix_attention_mask = suffix_attention_mask.unsqueeze(0)
 
-    # Create data module
-    data_module = LMDataModule(cfg, lightning_model.tokenizer)
-    data_module.prepare_data()
-    data_module.setup()
+    assert suffix_input_ids.ndim == 2, \
+        f'input_ids shape mismatch: {suffix_input_ids.shape} != (batch_size, seq_len)'
 
-    train_dataloader = data_module.train_dataloader()
+    assert suffix_input_ids.size(0) in (1, beam_size), \
+        f'input_ids batch size must be 1 (single sample) or the beam size. Found: {suffix_input_ids.shape[0]}'
 
-    all_embeddings = lightning_model.model.get_input_embeddings().weight
-    assert all_embeddings.shape == (v, d), \
-        f'Expected all_embeddings shape {(v, d)}, but got {all_embeddings.shape}'
+    batch_size, seq_len = suffix_input_ids.shape
+    vocab_size = lightning_module.tokenizer.vocab_size
 
-    accuracy = torch.tensor(0, device=lightning_model.device, dtype=torch.long)
+    x_input_ids = torch.cat([
+        torch.zeros_like(suffix_input_ids[:, :1]),
+        suffix_input_ids,
+    ], dim=1)
+    assert x_input_ids.shape == (batch_size, seq_len + 1), \
+        f'input_ids shape mismatch: {x_input_ids.shape} != ({batch_size}, {seq_len + 1})'
 
-    # We want to classify the first token, given the gradients on the embedding layer
-    for batch in tqdm(train_dataloader):
-        batch: BatchType
-        batch.to(lightning_model.device)
-        x_input = batch.input_ids
-        n = x_input.size(0)
-        k = 10
+    # Replace the first token, according to the initialization strategy
+    # To do that, the input_ids must have a new token for every sentence
+    if use_init == 'bigram':
+        x_input_ids[:, 0] = reverse_bigram[suffix_input_ids[:, 0]]
+    elif use_init == 'random':
+        x_input_ids[:, 0] = torch.randint_like(x_input_ids[:, 0], 0, vocab_size)
+    elif use_init == 'pad':
+        x_input_ids[:, 0] = lightning_module.tokenizer.pad_token_id
+    else:
+        raise ValueError(f'Invalid initialization strategy: {use_init}. Allowed values are: bigram, random, pad')
 
-        # Take the last 30 tokens of the x_input, per item
-        # Remember that the padding is on the left
-        x_lengths = batch.attention_mask.sum(dim=1)
-        assert x_lengths.shape == (n,), \
-            f'Expected x_lengths shape {n}, but got {x_lengths.shape}'
+    x_attention_mask = torch.cat([
+        torch.ones_like(suffix_attention_mask[:, :1]),
+        suffix_attention_mask,
+    ], dim=1)
+    assert x_attention_mask.shape == (batch_size, seq_len + 1), \
+        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({batch_size}, {seq_len + 1})'
 
-        # x_last_token = x_lengths - 1
-        # assert torch.equal(batch.attention_mask[:, x_last_token][torch.eye(n) == 1], torch.ones(n)), \
-        #     'Something is wrong about the last token index'
+    shift_labels = torch.cat([
+        suffix_input_ids,
+        torch.zeros_like(suffix_input_ids[:, :1]),
+    ], dim=1)
+    assert shift_labels.shape == (batch_size, seq_len + 1), \
+        f'shift_labels shape mismatch: {shift_labels.shape} != ({batch_size}, {seq_len + 1})'
+    assert shift_labels[:, -1].sum() == 0, \
+        f'shift_labels last token must be zero: {shift_labels[:, -1]}'
 
-        x_ids_partial = x_input[:, k:].clone()
-        x_attn_partial = batch.attention_mask[:, k:]
-        assert torch.equal(
-            batch.attention_mask[:, k],
-            torch.ones(n, dtype=torch.long, device=lightning_model.device),
+    # Get the embeddings of X (with the k-th token replaced)
+    with torch.set_grad_enabled(True):
+        x_embed = lightning_module.model.get_input_embeddings()(x_input_ids).detach()
+        x_embed.requires_grad_(True)
+
+        outputs = lightning_module.model(
+            inputs_embeds=x_embed,
+            attention_mask=x_attention_mask,
+            labels='dummy',
+            shift_labels=shift_labels,
+        )
+        grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, 0]
+
+    # Predict the k-th token, based on the gradients of the first token embeddings
+    logits = forward_grad_embeddings(lightning_module.model, grad_x_embed)
+    assert logits.shape == (batch_size, vocab_size), \
+        f'logits shape mismatch: {logits.shape} != ({batch_size}, {vocab_size})'
+
+    # Take the top-K logits, where K is the beam size
+    # (token id = index in the vocabulary)
+    _, top_k_tokens = torch.topk(logits, beam_size, dim=-1, largest=True, sorted=False)
+    assert top_k_tokens.shape == (batch_size, beam_size), \
+        f'top_k_tokens shape mismatch: {top_k_tokens.shape} != ({batch_size}, {beam_size})'
+    assert top_k_tokens.dtype == torch.int64, \
+        f'top_k_tokens dtype mismatch: {top_k_tokens.dtype} != torch.int64'
+
+    # Now, we must increase the batch size, multiplying it by the beam size
+    # and repeat the input_ids and attention_mask
+    # Remember that repeat_interleave makes the original tensor [1,2,3] -> [1,1,2,2,3,3]
+    x_input_ids = x_input_ids.repeat_interleave(beam_size, dim=0)
+    x_attention_mask = x_attention_mask.repeat_interleave(beam_size, dim=0)
+    assert x_input_ids.shape == (batch_size * beam_size, seq_len + 1), \
+        f'input_ids shape mismatch: {x_input_ids.shape} != ({batch_size * beam_size}, {seq_len + 1})'
+    assert x_attention_mask.shape == (batch_size * beam_size, seq_len + 1), \
+        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({batch_size * beam_size}, {seq_len + 1})'
+
+    # Append to every sentence in the batch, their corresponding top-k tokens
+    for sample_i in range(batch_size):
+        # We have to set to the portion of x_input_ids that refers to the first sample in the original batch
+        # the top-k tokens.
+        x_input_ids[sample_i * beam_size:(sample_i + 1) * beam_size, 0] = top_k_tokens[sample_i]
+
+    # For each sample, keep only the top-k sentence with lower perplexity
+    x_input_ids, x_attention_mask, perplexities = get_least_perplexity_sentences(lightning_module, x_input_ids,
+                                                                                 x_attention_mask, beam_size)
+    assert x_input_ids.shape == (beam_size, seq_len + 1), \
+        f'input_ids shape mismatch: {x_input_ids.shape} != ({beam_size}, {seq_len + 1})'
+    assert x_attention_mask.shape == (beam_size, seq_len + 1), \
+        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({beam_size}, {seq_len + 1})'
+
+    # predicted_texts = lightning_module.tokenizer.batch_decode(x_input_ids[:, :10], skip_special_tokens=True)
+    # print(f"BEAM:")
+    # for i, (perplexity, text) in enumerate(zip(perplexities, predicted_texts)):
+    #     print(f"  - {i}: [{perplexity}] {text}")
+    # print()
+
+    return x_input_ids, x_attention_mask
+
+
+@torch.no_grad()
+def get_least_perplexity_sentences(lightning_module: BaseLMModel,
+                                   x_input_ids: torch.Tensor,
+                                   x_attention_mask: torch.Tensor,
+                                   beam_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Get the least perplexity sentences from the given input IDs and attention mask.
+    This function computes the perplexity of each sentence and returns the top-k sentences with the lowest perplexity.
+
+    The following code is taken from:
+    https://github.com/huggingface/evaluate/blob/5aa3982a9a8c86/metrics/perplexity/perplexity.py#L179
+
+    Args:
+        lightning_module: The model to use for inference.
+        x_input_ids: Input IDs of the sentences.
+        x_attention_mask: Attention mask of the sentences.
+        beam_size: Beam size for the inference, which corresponds to the number of sentences to return.
+
+    Returns:
+        tuple: A tuple containing the top-k input IDs, attention mask, and their corresponding perplexities.
+    """
+    perplexity_batch = get_batch_perplexity(lightning_module, x_input_ids, x_attention_mask)
+
+    # Get the top-k sentences with the lowest perplexity
+    _, top_k_indices = torch.topk(perplexity_batch, beam_size, dim=0, largest=False, sorted=True)
+    assert top_k_indices.shape == (beam_size,), \
+        f'Expected top_k_indices to be of shape (beam_size,), but got {top_k_indices.shape}'
+
+    return x_input_ids[top_k_indices], x_attention_mask[top_k_indices], perplexity_batch[top_k_indices]
+
+
+def get_batch_perplexity(lightning_module: BaseLMModel,
+                         x_input_ids: torch.Tensor,
+                         x_attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Get the perplexity of the given input IDs and attention mask.
+
+    Args:
+        lightning_module: The model to use for inference.
+        x_input_ids: Input IDs of the sentences.
+        x_attention_mask: Attention mask of the sentences.
+
+    Returns:
+        torch.Tensor: The perplexity of the sentences.
+    """
+    assert x_input_ids.shape == x_attention_mask.shape, \
+        f'input_ids and attention_mask shape mismatch: {x_input_ids.shape} != {x_attention_mask.shape}'
+
+    if x_input_ids.ndim == 1:
+        # If the input is a single sentence, add a batch dimension
+        x_input_ids = x_input_ids.unsqueeze(0)
+        x_attention_mask = x_attention_mask.unsqueeze(0)
+    assert x_input_ids.ndim == 2, \
+        f'input_ids shape mismatch: {x_input_ids.shape} != (batch_size, seq_len)'
+
+    out_logits = lightning_module.model(x_input_ids, attention_mask=x_attention_mask).logits
+
+    labels = x_input_ids
+
+    shift_logits = out_logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+    shift_attention_mask_batch = x_attention_mask[..., 1:].contiguous()
+
+    loss_fct = CrossEntropyLoss(reduction="none")
+
+    perplexity_batch = torch.exp(
+        (loss_fct(shift_logits.transpose(1, 2), shift_labels) * shift_attention_mask_batch).sum(1)
+        / shift_attention_mask_batch.sum(1)
+    )
+    assert perplexity_batch.shape == (x_input_ids.shape[0],), \
+        f'perplexity_batch shape mismatch: {perplexity_batch.shape} != ({x_input_ids.shape[0]},)'
+
+    return perplexity_batch
+
+
+def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig,
+                   k_samples: int, skip_prefix_tokens: int, beam_size: int):
+    lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
+        cfg=cfg,
+        device=device,
+        use_init=use_init,
+        ckpt_file=ckpt_file,
+    )
+
+    lightning_module.eval()
+
+    batch: BatchType = next(iter(data_module.val_dataloader())).to(torch.device(device))
+
+    input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
+    t = input_ids.size(-1)
+
+    # Take only a few samples
+    input_ids, attention_mask = input_ids[:k_samples], attention_mask[:k_samples]
+    assert input_ids.shape == (k_samples, t), \
+        f'input_ids shape mismatch: {input_ids.shape} != ({k_samples}, {t})'
+    assert attention_mask.shape == (k_samples, t), \
+        f'attention_mask shape mismatch: {attention_mask.shape} != ({k_samples}, {t})'
+
+    # And remove a few prefix tokens
+    input_ids, attention_mask = input_ids[:, skip_prefix_tokens:], attention_mask[:, skip_prefix_tokens:]
+    t -= skip_prefix_tokens
+    assert input_ids.shape == (k_samples, t), \
+        f'input_ids shape mismatch: {input_ids.shape} != ({k_samples}, {t})'
+    assert attention_mask.shape == (k_samples, t), \
+        f'attention_mask shape mismatch: {attention_mask.shape} != ({k_samples}, {t})'
+
+    for sample_input_ids, sample_attention_mask in zip(input_ids, attention_mask):
+        # Give the model the input_ids without the first prefix_len tokens and see what happens
+        suffix_input_ids = sample_input_ids[prefix_len:]
+        suffix_attention_mask = sample_attention_mask[prefix_len:]
+        assert suffix_input_ids.shape == (t - prefix_len,), \
+            f'suffix_input_ids shape mismatch: {suffix_input_ids.shape} != ({t - prefix_len},)'
+        assert suffix_attention_mask.shape == (t - prefix_len,), \
+            f'suffix_attention_mask shape mismatch: {suffix_attention_mask.shape} != ({t - prefix_len},)'
+
+        suffix_tokens_len = suffix_input_ids.size(-1)
+        suffix_text = lightning_module.tokenizer.decode(suffix_input_ids, skip_special_tokens=True)
+
+        # Iteratively replace the first token, in an autoregressive manner
+        while suffix_input_ids.size(-1) < t:
+            suffix_input_ids, suffix_attention_mask = backward_infer_prefix(
+                lightning_module,
+                use_init,
+                reverse_bigram,
+                suffix_input_ids,
+                suffix_attention_mask,
+                beam_size,
+            )
+        # Since the sentences are sorted, take the first one, which is the best one
+        suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
+
+        prefix_tokens_len = t - suffix_tokens_len
+
+        # Finally, print the predicted sentence
+        print_text_stats(
+            lightning_module=lightning_module,
+            input_ids=suffix_input_ids,
+            attention_mask=suffix_attention_mask,
+            prefix_tokens_len=prefix_tokens_len,
+            tag='Predicted',
+            ansi_color='36',
         )
 
-        # We want to predict the first token
-        y_true = x_ids_partial[:, 0].clone()
+        print_text_stats(
+            lightning_module=lightning_module,
+            input_ids=sample_input_ids,
+            attention_mask=sample_attention_mask,
+            prefix_tokens_len=prefix_tokens_len,
+            tag='Original',
+            ansi_color='32',
+        )
 
-        # Hide the first token from the input
-        x_ids_partial[:, 0] = lightning_model.tokenizer.pad_token_id
+        print(f"\033[1m[...]\033[0m {suffix_text}")
 
-        # Do a forward pass
-        x_embeds_partial = lightning_model.model.get_input_embeddings()(x_ids_partial)
-        with torch.set_grad_enabled(True):
-            x_embeds_partial.requires_grad_(True)
-            masked_outputs: CausalLMOutputWithPast = lightning_model.model(inputs_embeds=x_embeds_partial,
-                                                                           attention_mask=x_attn_partial,
-                                                                           labels=x_ids_partial,  # FIXME
-                                                                           output_hidden_states=False)
-            x_grads = torch.autograd.grad(
-                masked_outputs.loss,
-                [x_embeds_partial],
-                create_graph=False,
-            )[0]
-
-        # Calculate pairwise L2 distances using torch.cdist
-        # The result `dist_matrix` will have shape (N, V)
-        # where dist_matrix[i, j] is the L2 distance between N_tensor[i] and M_tensor[j]
-        y_hat = x_grads[:, 0, :]
-        dist_matrix = torch.cdist(y_hat, all_embeddings, p=2)
-        assert dist_matrix.shape == (n, v), \
-            f'Expected dist_matrix shape {(n, v)}, but got {dist_matrix.shape}'
-
-        # Get the prediction for each sample
-        y_pred = torch.argmin(dist_matrix, dim=1)
-
-        assert y_pred.shape == (n,), \
-            f'Expected y_pred shape {(n,)}, but got {y_pred.shape}'
-
-        # accuracy += torch.sum(y_pred == y_true)
-        #
-        # print('True distances:', dist_matrix[:, y_true][torch.eye(n) == 1])
-        # print('Predicted distances:', dist_matrix[:, y_pred][torch.eye(n) == 1])
-
-        sorted_rank_of_y_pred = torch.zeros(n, dtype=torch.long, device=lightning_model.device)
-        for i in range(n):  # FIXME: do not use a for loop
-            predictions = dist_matrix[i]
-            assert predictions.shape == (v,), \
-                f'Expected predictions shape {(v,)}, but got {predictions.shape}'
-
-            sorted_predictions, _ = torch.sort(predictions)
-            k_pred = torch.eq(sorted_predictions, predictions[y_true[i]]).int().argmax()
-            sorted_rank_of_y_pred[i] = k_pred
-
-        # print('It would be K-th prediction:', sorted_rank_of_y_pred)
-        accuracy += (sorted_rank_of_y_pred < top_k_for_accuracy).sum()
-
-    tqdm.write(
-        f'Final accuracy: {accuracy} / {len(train_dataloader.dataset)} = {accuracy / len(train_dataloader.dataset):.2%}')
+        print()
 
 
-if __name__ == "__main__":
+def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, attention_mask: torch.Tensor,
+                     prefix_tokens_len: int, tag: str, ansi_color: str):
+    text_ppl = get_batch_perplexity(lightning_module, input_ids, attention_mask).item()
+
+    prefix_ids = input_ids[:prefix_tokens_len]
+    prefix_attn_mask = attention_mask[:prefix_tokens_len]
+    prefix_text = lightning_module.tokenizer.decode(prefix_ids, skip_special_tokens=True)
+    prefix_ppl = get_batch_perplexity(lightning_module, prefix_ids, prefix_attn_mask).item()
+
+    print(f"{tag} [PPL: {prefix_ppl:.4f} / {text_ppl:.4f}]: "
+          f"\033[0;{ansi_color}m{prefix_text}\033[0m")
+
+
+@apply_config('inv-first-tiny-train')
+def main(cfg: CustomLLMPagConfig):
+    run_evaluation(device='cuda:2',
+                   k_samples=10,
+                   skip_prefix_tokens=10,
+                   beam_size=10,
+                   prefix_len=10,
+                   use_init='pad',
+                   ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
+                   cfg=cfg)
+
+
+if __name__ == '__main__':
     main()

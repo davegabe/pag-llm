@@ -61,7 +61,7 @@ def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_
     return torch_bigram, distribution_after_token
 
 
-def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
+def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_file: str):
     torch.set_float32_matmul_precision('medium')
 
     # Decide the strategy for the init
@@ -96,6 +96,17 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     # To always use PAD token as the filler for the unknown token:
     if use_init == 'pad':
         reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
+
+    return lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts
+
+
+def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
+    lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts = init_evaluation(
+        cfg=cfg,
+        device=device,
+        use_init=use_init,
+        ckpt_file=ckpt_file,
+    )
 
     # Do a forward testing
     # trainer = Trainer(devices='0,')
