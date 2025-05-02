@@ -150,9 +150,6 @@ def get_least_perplexity_sentences(lightning_module: BaseLMModel,
     Get the least perplexity sentences from the given input IDs and attention mask.
     This function computes the perplexity of each sentence and returns the top-k sentences with the lowest perplexity.
 
-    The following code is taken from:
-    https://github.com/huggingface/evaluate/blob/5aa3982a9a8c86/metrics/perplexity/perplexity.py#L179
-
     Args:
         lightning_module: The model to use for inference.
         x_input_ids: Input IDs of the sentences.
@@ -177,6 +174,10 @@ def get_batch_perplexity(lightning_module: BaseLMModel,
                          x_attention_mask: torch.Tensor) -> torch.Tensor:
     """
     Get the perplexity of the given input IDs and attention mask.
+    This function computes the perplexity of each sentence in the batch and returns a tensor containing the perplexity.
+
+    The following code is taken from:
+    https://github.com/huggingface/evaluate/blob/5aa3982a9a8c86/metrics/perplexity/perplexity.py#L179
 
     Args:
         lightning_module: The model to use for inference.
