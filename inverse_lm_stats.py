@@ -144,7 +144,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 inputs_embeds=x_embed[:, k:],
                 attention_mask=attention_mask[:, k:],
                 labels='dummy',
-                shift_labels=shift_labels[:, k:].clone(),  # Required by .view(-1) in PyTorch loss_utils.py internals
+                shift_labels=shift_labels[:, k:].contiguous(),
+                # Required by .view(-1) in PyTorch loss_utils.py internals
             )
             grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, k]
 
