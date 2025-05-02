@@ -307,7 +307,7 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
     prefix_text = lightning_module.tokenizer.decode(prefix_ids, skip_special_tokens=True)
     prefix_ppl = get_batch_perplexity(lightning_module, prefix_ids, prefix_attn_mask).item()
 
-    print(f"{tag} [PPL: {prefix_ppl:.4f} / {text_ppl:.4f}]: "
+    print(f"{tag} [PPL - prefix: {prefix_ppl:.4f} / overall: {text_ppl:.4f}]: "
           f"\033[0;{ansi_color}m{prefix_text}\033[0m")
 
 
@@ -316,7 +316,7 @@ def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:2',
                    k_samples=10,
                    skip_prefix_tokens=10,
-                   beam_size=10,
+                   beam_size=20,
                    prefix_len=10,
                    use_init='pad',
                    ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
