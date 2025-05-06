@@ -5,7 +5,7 @@
 ### Change the job name and partition
 
 # Job name:
-#SBATCH --job-name=pag-llm_tinystories_bert
+#SBATCH --job-name=pag-llm_identity
 
 # Define the partition on which the job shall run
 #SBATCH --partition=department_only
@@ -28,7 +28,7 @@
 # Wall time
 # Format: "minutes", "hours:minutes:seconds",
 # "days-hours", or "days-hours:minutes"
-#SBATCH --time=15:00:00
+#SBATCH --time=3-00:00:00
 
 # Standard output and error to file
 # %x: job name, %j: job ID
