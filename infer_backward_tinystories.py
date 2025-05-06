@@ -316,11 +316,11 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:2',
                    k_samples=10,  # How many samples to take from the dataset
-                   skip_prefix_tokens=10,  # How many tokens to skip entirely
+                   skip_prefix_tokens=30,  # How many tokens to skip entirely
                    beam_size=20,
-                   prefix_len=5,  # How many tokens to predict
-                   use_init='pad',
-                   ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
+                   prefix_len=10,  # How many tokens to predict
+                   use_init='random',
+                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
                    cfg=cfg)
 
 
