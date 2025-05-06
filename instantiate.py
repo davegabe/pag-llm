@@ -75,7 +75,7 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
     # If it fails to import pathlib._local,
     # it means that the checkpoint was saved with a different version of Python.
     # More specifically, on laika we have 3.13.
-    # For sure, it does NOT work on 3.10.
+    # For sure, it does NOT work on 3.10 (Cineca) neither on 3.12 (DI cluster).
     torch_device = 'cpu'
     if torch.cuda.is_available():
         torch_device = 'cuda'
