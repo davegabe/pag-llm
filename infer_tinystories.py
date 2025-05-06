@@ -32,6 +32,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
     prompts = [
         "The cat is on",
         "The pen is on",
+        "Once upon a time, "
     ]
 
     print("-" * 80)
