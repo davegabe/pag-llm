@@ -3,14 +3,14 @@ _target_: config.CustomLLMPagConfig
 training:
   _target_: config.TrainingConfig
   learning_rate: 0.004
-  batch_size: 256
+  batch_size: 128
   gradient_accumulation_steps: 1
   warmup_pretrain_epochs: 0
-  num_epochs: 5
+  num_epochs: 15
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256
-  method: 'pag-mix-identity-score-embeddings'
+  method: 'identity-grad'
   pag_classes: 256
   lora:
     _target_: config.LoraTConfig
@@ -22,10 +22,10 @@ training:
 model:
   _target_: config.CustomModelConfig
   hidden_layer_index: 5
-  hidden_size: 256
-  intermediate_size: 640
+  hidden_size: 512
+  intermediate_size: 1024
   num_attention_heads: 16
-  num_hidden_layers: 3
+  num_hidden_layers: 8
   num_key_value_heads: 4
   tie_word_embeddings: True
   vocab_size: 2048
