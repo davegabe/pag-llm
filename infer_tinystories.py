@@ -6,7 +6,7 @@ from models.base_model import BaseLMModel
 
 
 def load_model(cfg: CustomLLMPagConfig | LLMPagConfig) -> BaseLMModel:
-    device, prefix_len = 'cuda:3', 5
+    device, prefix_len = 'cuda:0', 5
     torch.set_float32_matmul_precision('medium')
 
     lightning_model, data_module, module_name, cfg = load_model_from_checkpoint(
