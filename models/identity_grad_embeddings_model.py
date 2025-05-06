@@ -94,13 +94,15 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
             # Take only the valid gradients
             grad_x_embed = grad_x_embed[batch.attention_mask == 1]
-            assert grad_x_embed.shape == (valid_tokens.size(), x_embed.size(-1)), \
-                f'Expected grad_x_embed to be of shape (n\', d), but got {grad_x_embed.shape}'
+
+            n_first, vocab_size, d = valid_tokens.size(0), self.model.config.vocab_size, x_embed.size(-1)
+            assert grad_x_embed.shape == (n_first, d), \
+                f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
 
             # Forward pass to get the logits and probabilities
             logits = forward_grad_embeddings(self.model, grad_x_embed)
-            assert logits.shape == (valid_tokens.size(), self.model.config.vocab_size), \
-                f'Expected logits to be of shape (n\', vocab_size), but got {logits.shape}'
+            assert logits.shape == (n_first, vocab_size), \
+                f'Expected logits to be of shape (n\'={n_first}, {vocab_size=}), but got {logits.shape}'
 
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
@@ -144,11 +146,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Calculate perplexity
         perplexity = torch.exp(loss_ce)
         self.log_dict({
-            'val/loss_ce': loss_ce,
-            'val/loss_first_inv': loss_grads,
-            'val/perplexity': perplexity,
-            'val/loss': loss,
+            f'{tag}/loss_ce': loss_ce,
+            f'{tag}/loss_first_inv': loss_grads,
+            f'{tag}/loss': loss,
         }, prog_bar=True, sync_dist=True)
+        self.log(f'{tag}/perplexity', perplexity, prog_bar=False, sync_dist=True)
 
         # Ensure that the model has no gradients
         self.model.zero_grad()
