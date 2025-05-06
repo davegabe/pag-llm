@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-@apply_config('tiny-train')
+@apply_config('inv-first-tiny-train')
 def train(cfg: LLMPagConfig | CustomLLMPagConfig):
     print('Using config:', cfg)
 
