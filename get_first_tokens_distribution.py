@@ -37,11 +37,11 @@ def main(cfg: CustomLLMPagConfig):
         # Show this distribution using matplotlib
         x_axis = [lightning_module.tokenizer.decode([token_id]) for token_id in meaningful_tokens]
         y_axis = [k_distribution[token_id] for token_id in meaningful_tokens]
-        plt.bar(x_axis, y_axis, color=colors[k], label=f'K={k}')
-        plt.xlabel('Token ID')
-        plt.ylabel(f'Frequency at K={k}')
+        plt.bar(x_axis, y_axis, color=colors[k], label=f'Token position = {k}')
+        plt.xlabel('Token')
+        plt.ylabel(f'Frequency')
 
-    plt.title(f'Distribution of First Tokens')
+    plt.title(f'Distribution of the First Tokens')
     plt.xticks(rotation=90)
     plt.tight_layout()
     plt.legend()
