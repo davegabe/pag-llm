@@ -14,6 +14,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
                           reverse_bigram: torch.Tensor | None,
                           suffix_input_ids: torch.Tensor,
                           suffix_attention_mask: torch.Tensor,
+                          suffix_length: int,
                           beam_size: int) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Perform backward inference on the given suffix input IDs and attention mask.
@@ -24,6 +25,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         reverse_bigram (torch.Tensor): The reverse bigram tensor. Required for 'bigram' initialization.
         suffix_input_ids (torch.Tensor): The input IDs of the suffix.
         suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
+        suffix_length (int): The length of the fixed given suffix.
         beam_size (int): The beam size for the inference.
 
     Returns:
@@ -47,6 +49,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
 
     batch_size, seq_len = suffix_input_ids.shape
     vocab_size = lightning_module.tokenizer.vocab_size
+    prefix_length = seq_len - suffix_length + 1
 
     x_input_ids = torch.cat([
         torch.zeros_like(suffix_input_ids[:, :1]),
@@ -126,7 +129,8 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
 
     # For each sample, keep only the top-k sentence with lower perplexity
     x_input_ids, x_attention_mask, perplexities = get_least_perplexity_sentences(lightning_module, x_input_ids,
-                                                                                 x_attention_mask, beam_size)
+                                                                                 x_attention_mask, beam_size,
+                                                                                 prefix_length)
     assert x_input_ids.shape == (beam_size, seq_len + 1), \
         f'input_ids shape mismatch: {x_input_ids.shape} != ({beam_size}, {seq_len + 1})'
     assert x_attention_mask.shape == (beam_size, seq_len + 1), \
@@ -145,7 +149,8 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
 def get_least_perplexity_sentences(lightning_module: BaseLMModel,
                                    x_input_ids: torch.Tensor,
                                    x_attention_mask: torch.Tensor,
-                                   beam_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+                                   beam_size: int,
+                                   prefix_length: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Get the least perplexity sentences from the given input IDs and attention mask.
     This function computes the perplexity of each sentence and returns the top-k sentences with the lowest perplexity.
@@ -155,11 +160,15 @@ def get_least_perplexity_sentences(lightning_module: BaseLMModel,
         x_input_ids: Input IDs of the sentences.
         x_attention_mask: Attention mask of the sentences.
         beam_size: Beam size for the inference, which corresponds to the number of sentences to return.
+        prefix_length: The length of the prefix to consider for token duplication calculation.
 
     Returns:
         tuple: A tuple containing the top-k input IDs, attention mask, and their corresponding perplexities.
     """
     perplexity_batch = get_batch_perplexity(lightning_module, x_input_ids, x_attention_mask)
+    # Penalize repeated tokens in x_input_ids, being aware of the attention mask
+    token_repetitions = count_repeated_tokens(x_input_ids[:, :prefix_length], x_attention_mask[:, :prefix_length])
+    perplexity_batch += token_repetitions * 0.5
 
     # Get the top-k sentences with the lowest perplexity
     _, top_k_indices = torch.topk(perplexity_batch, beam_size, dim=0, largest=False, sorted=True)
@@ -169,6 +178,45 @@ def get_least_perplexity_sentences(lightning_module: BaseLMModel,
     return x_input_ids[top_k_indices], x_attention_mask[top_k_indices], perplexity_batch[top_k_indices]
 
 
+@torch.no_grad()
+def count_repeated_tokens(x_input_ids: torch.Tensor, x_attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Count the number of repeated tokens in the given input IDs, considering the attention mask for valid tokens.
+    This function computes the number of repeated tokens for each sentence in the batch.
+
+    Args:
+        x_input_ids: Input IDs of the sentences.
+        x_attention_mask: Attention mask of the sentences.
+
+    Returns:
+        torch.Tensor: The number of repeated tokens for each sentence.
+    """
+    assert x_input_ids.shape == x_attention_mask.shape, \
+        f'input_ids and attention_mask shape mismatch: {x_input_ids.shape} != {x_attention_mask.shape}'
+    assert x_input_ids.ndim == 2, \
+        f'input_ids shape mismatch: {x_input_ids.shape} != (batch_size, seq_len)'
+
+    num_classes = x_input_ids.max().item() + 1
+
+    # Set an invalid token ID where the attention_mask is zero
+    invalid_token_id = num_classes
+    x_input_ids = x_input_ids.masked_fill(x_attention_mask == 0, invalid_token_id)
+
+    # Get the counts of each token in the batch, keeping the batch dimension
+    # From: https://discuss.pytorch.org/t/batched-bincount/72819/4
+    target = torch.zeros(x_input_ids.size(0), invalid_token_id + 1, dtype=x_input_ids.dtype, device=x_input_ids.device)
+    values = torch.ones_like(x_input_ids)
+    target.scatter_add_(dim=1, index=x_input_ids, src=values)
+
+    # Remove the invalid token id from the target
+    target = target[:, :invalid_token_id]
+
+    # Now, remove zeros (tokens not showing in the input_ids) and ones (tokens not repeating) from the target
+    target = target.masked_fill_(target < 2, 1)
+    return (target - 1).sum(dim=1)
+
+
+@torch.no_grad()
 def get_batch_perplexity(lightning_module: BaseLMModel,
                          x_input_ids: torch.Tensor,
                          x_attention_mask: torch.Tensor) -> torch.Tensor:
@@ -268,6 +316,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 reverse_bigram,
                 suffix_input_ids,
                 suffix_attention_mask,
+                suffix_tokens_len,
                 beam_size,
             )
         # Since the sentences are sorted, take the first one, which is the best one
@@ -308,19 +357,21 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
     prefix_text = lightning_module.tokenizer.decode(prefix_ids, skip_special_tokens=True)
     prefix_ppl = get_batch_perplexity(lightning_module, prefix_ids, prefix_attn_mask).item()
 
-    print(f"{tag} [PPL - prefix: {prefix_ppl:.4f} / overall: {text_ppl:.4f}]: "
+    token_duplications = count_repeated_tokens(prefix_ids[None, :], prefix_attn_mask[None, :]).item()
+
+    print(f"{tag} [PPL - prefix: {prefix_ppl:.4f} / overall: {text_ppl:.4f} / penalty: {token_duplications}]: "
           f"\033[0;{ansi_color}m{prefix_text}\033[0m")
 
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:2',
+    run_evaluation(device='cuda:1',
                    k_samples=10,  # How many samples to take from the dataset
-                   skip_prefix_tokens=30,  # How many tokens to skip entirely
+                   skip_prefix_tokens=20,  # How many tokens to skip entirely
                    beam_size=20,
                    prefix_len=10,  # How many tokens to predict
-                   use_init='random',
-                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
+                   use_init='pad',
+                   ckpt_file='tinystories_inv_first_norm__9ecoqzxt.ckpt',
                    cfg=cfg)
 
 
