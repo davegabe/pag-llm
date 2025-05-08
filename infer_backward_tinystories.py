@@ -168,7 +168,7 @@ def get_least_perplexity_sentences(lightning_module: BaseLMModel,
     perplexity_batch = get_batch_perplexity(lightning_module, x_input_ids, x_attention_mask)
     # Penalize repeated tokens in x_input_ids, being aware of the attention mask
     token_repetitions = count_repeated_tokens(x_input_ids[:, :prefix_length], x_attention_mask[:, :prefix_length])
-    perplexity_batch += token_repetitions * 0.5
+    perplexity_batch += token_repetitions
 
     # Get the top-k sentences with the lowest perplexity
     _, top_k_indices = torch.topk(perplexity_batch, beam_size, dim=0, largest=False, sorted=True)
@@ -367,11 +367,11 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:1',
                    k_samples=30,  # How many samples to take from the dataset
-                   skip_prefix_tokens=20,  # How many tokens to skip entirely
+                   skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=20,
-                   prefix_len=10,  # How many tokens to predict
-                   use_init='pad',
-                   ckpt_file='tinystories_inv_first_norm__9ecoqzxt.ckpt',
+                   prefix_len=20,  # How many tokens to predict
+                   use_init='bigram',
+                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
                    cfg=cfg)
 
 
