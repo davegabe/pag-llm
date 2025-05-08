@@ -366,7 +366,7 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:1',
-                   k_samples=10,  # How many samples to take from the dataset
+                   k_samples=30,  # How many samples to take from the dataset
                    skip_prefix_tokens=20,  # How many tokens to skip entirely
                    beam_size=20,
                    prefix_len=10,  # How many tokens to predict
