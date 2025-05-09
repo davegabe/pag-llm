@@ -31,7 +31,7 @@ class GCG:
         self.top_k = top_k
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
-            stop_after_same_loss_steps: int | None = None) -> tuple[str, str]:
+            stop_after_same_loss_steps: int | None = None) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -45,6 +45,7 @@ class GCG:
         Returns:
             x_attack_str: The final attack prompt.
             y_attack_response: The message returned by the model, after the attack.
+            step: The number of steps run before stopping the attack.
         """
         set_seeds()
 
@@ -57,6 +58,7 @@ class GCG:
 
         previous_losses: list[torch.Tensor] = []
 
+        step: int = 0
         for step in tqdm(range(self.num_steps), desc='Running GCG'):
             x_one_hot.unsqueeze_(0)
             x_one_hot.requires_grad_(True)
@@ -68,20 +70,18 @@ class GCG:
                 if len(previous_losses) >= stop_after_same_loss_steps \
                         and max(previous_losses) - min(previous_losses) < 1e-9:
                     # Early stopping
-                    tqdm.write(f'EARLY STOPPING after {step} steps: '
-                               f'loss haven\'t changed in {stop_after_same_loss_steps} steps')
                     break
 
                 previous_losses = previous_losses[-stop_after_same_loss_steps:]
 
             if evaluate_every_n_steps is not None and step % evaluate_every_n_steps == 0:
                 x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
-                tqdm.write(f'At step {step}, with attack "{x_attack_str}", '
-                           f'LLM completed with "{y_attack_response}" '
-                           f'(loss: {loss.item()})\n')
+                tqdm.write(f'Step: {step}')
+                tqdm.write(f'\tAttack: "{x_attack_str}"')
+                tqdm.write(f'\tLLM Response (loss: {loss.item():.3f}): "{y_attack_response}"\n')
 
         x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
-        return x_attack_str, y_attack_response
+        return x_attack_str, y_attack_response, step
 
     @torch.no_grad()
     def _evaluate_attack(self, x_one_hot: torch.Tensor, y_output_length: int) -> tuple[str, str]:
