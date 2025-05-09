@@ -30,7 +30,8 @@ class GCG:
         self.search_width = search_width
         self.top_k = top_k
 
-    def run(self, y_message: str, evaluate_every_n_steps: int | None = None) -> tuple[str, str]:
+    def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
+            stop_after_same_loss_steps: int | None = None) -> tuple[str, str]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -38,6 +39,8 @@ class GCG:
             y_message: The message to be targeted as the desired output.
             evaluate_every_n_steps: Number of steps to run before evaluating the attack.
                                     If None, no evaluation is performed.
+            stop_after_same_loss_steps: Number of steps to run with the same GCG loss value before stopping the attack.
+                                         If None, no early stopping is performed.
 
         Returns:
             x_attack_str: The final attack prompt.
@@ -52,10 +55,24 @@ class GCG:
         # Our input X is a set of num_prefix_tokens random tokens, that will have to be optimized
         x_one_hot = self._generate_random_one_hot()
 
+        previous_losses: list[torch.Tensor] = []
+
         for step in tqdm(range(self.num_steps), desc='Running GCG'):
             x_one_hot.unsqueeze_(0)
             x_one_hot.requires_grad_(True)
             x_one_hot, loss = self._run_step(x_one_hot, y_ids, y_embeds)
+
+            if stop_after_same_loss_steps is not None:
+                previous_losses.append(loss)
+
+                if len(previous_losses) >= stop_after_same_loss_steps \
+                        and max(previous_losses) - min(previous_losses) < 1e-9:
+                    # Early stopping
+                    tqdm.write(f'EARLY STOPPING after {step} steps: '
+                               f'loss haven\'t changed in {stop_after_same_loss_steps} steps')
+                    break
+
+                previous_losses = previous_losses[-stop_after_same_loss_steps:]
 
             if evaluate_every_n_steps is not None and step % evaluate_every_n_steps == 0:
                 x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
@@ -63,7 +80,8 @@ class GCG:
                            f'LLM completed with "{y_attack_response}" '
                            f'(loss: {loss.item()})\n')
 
-        return self._evaluate_attack(x_one_hot, y_len)
+        x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+        return x_attack_str, y_attack_response
 
     @torch.no_grad()
     def _evaluate_attack(self, x_one_hot: torch.Tensor, y_output_length: int) -> tuple[str, str]:

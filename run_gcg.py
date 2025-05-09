@@ -34,7 +34,9 @@ def main(cfg: CustomLLMPagConfig):
         top_k=64,
     )
     target_response = ' and it was a sunny day.'
-    x_attack_str, y_attack_response = gcg.run(target_response, evaluate_every_n_steps=50)
+    x_attack_str, y_attack_response = gcg.run(target_response,
+                                              evaluate_every_n_steps=50,
+                                              stop_after_same_loss_steps=10)
     print(f"Attack string: {x_attack_str}")
     print(f"Attack response: {y_attack_response}")
     print(f"Desired response: {target_response}")
