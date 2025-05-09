@@ -1,8 +1,50 @@
+import json
+import pathlib
+
 import torch
 
 from config import CustomLLMPagConfig, apply_config
-from gcg import gcg_algorithm
+from data.data_processor import TextDataset
+from gcg import gcg_algorithm, gcg_evaluation
 from instantiate import load_model_from_checkpoint
+
+
+def run_gcg_single_attack(gcg: gcg_algorithm.GCG, target_response: str):
+    x_attack_str, y_attack_response, _ = gcg.run(target_response,
+                                                 evaluate_every_n_steps=50,
+                                                 stop_after_same_loss_steps=10)
+    print(f"Attack string: {x_attack_str}")
+    print(f"Attack response: {y_attack_response}")
+    print(f"Desired response: {target_response}")
+
+
+def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_output_file: pathlib.Path):
+    print('Attacking:', gcg_output_file.stem)
+    gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
+                                                         target_response_len=10,
+                                                         max_samples_to_attack=10_000)
+    with gcg_output_file.open('w') as f:
+        json.dump([r.to_dict() for r in gcg_results], f, indent=4)
+    print(f"Saved GCG results to {gcg_output_file}")
+
+
+def analyze_gcg_results(gcg_output_file: pathlib.Path):
+    with gcg_output_file.open('r') as f:
+        gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
+
+    # Count the number of successfully attacked tokens
+    num_successful_tokens = sum(
+        1
+        for result in gcg_results
+        for target_token, attack_response_token in zip(result.target_response_ids, result.y_attack_response_ids)
+        if target_token == attack_response_token
+    )
+    num_total_tokens = sum(
+        min(len(result.target_response_ids), len(result.y_attack_response_ids))
+        for result in gcg_results
+    )
+    token_attack_success_rate = num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0
+    print(f'Token attack success rate: {token_attack_success_rate:.2%}')
 
 
 @apply_config('inv-first-tiny-train')
@@ -17,7 +59,7 @@ def main(cfg: CustomLLMPagConfig):
     torch.set_float32_matmul_precision('medium')
 
     # Instantiate model and data module
-    ckpt_file = 'tinystories_identity_grad_norm__qp6q1mop.ckpt'
+    ckpt_file = 'tinystories_base__cs1bklll.ckpt'
     lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
         cfg.model.output_dir / ckpt_file,
         cfg,
@@ -33,13 +75,11 @@ def main(cfg: CustomLLMPagConfig):
         search_width=1000,
         top_k=64,
     )
-    target_response = ' and it was a sunny day.'
-    x_attack_str, y_attack_response, _ = gcg.run(target_response,
-                                              evaluate_every_n_steps=50,
-                                              stop_after_same_loss_steps=10)
-    print(f"Attack string: {x_attack_str}")
-    print(f"Attack response: {y_attack_response}")
-    print(f"Desired response: {target_response}")
+    # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
+
+    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
+    run_full_gcg_evaluation(gcg, data_module.val_dataset, gcg_output_file)
+    analyze_gcg_results(gcg_output_file)
 
 
 if __name__ == '__main__':

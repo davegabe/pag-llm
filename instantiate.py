@@ -27,7 +27,7 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
             cfg.dataset,
             cfg.model
         )
-        model_name = str(cfg.model.output_dir).split("/")[-1]
+        model_name = None  # Use the model_name parameter in BaseLMModel
     else:
         model, tokenizer = loader.load_model_and_tokenizer(
             cfg.model.pretrained_base,
@@ -57,7 +57,7 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
 
-    return lightning_model, data_module, model_name
+    return lightning_model, data_module, model_name or lightning_model.model_name
 
 
 def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConfig) -> tuple[

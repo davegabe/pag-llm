@@ -26,7 +26,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
     ):
-        super().__init__(model, tokenizer, config)
+        super().__init__('bertlike', model, tokenizer, config)
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes  # Number of different next tokens to consider
         self.criterion = torch.nn.CrossEntropyLoss()

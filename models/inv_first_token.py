@@ -17,7 +17,7 @@ class InvFirstTokenModel(BaseLMModel):
         tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig
     ):
-        super().__init__(model, tokenizer, config)
+        super().__init__('invfirst', model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs

@@ -9,13 +9,13 @@ from models.common import compute_top_k_accuracies
 
 
 class BaseLMModel(pl.LightningModule):
-    def __init__(
-        self,
-        model: PreTrainedModel,
-        tokenizer: PreTrainedTokenizerFast,
-            config: LLMPagConfig,
-    ):
+    def __init__(self,
+                 model_name: str,
+                 model: PreTrainedModel,
+                 tokenizer: PreTrainedTokenizerFast,
+                 config: LLMPagConfig):
         super().__init__()
+        self.model_name = model_name
         self.model = model
         self.tokenizer = tokenizer
         self.config = config

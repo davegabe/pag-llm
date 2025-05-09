@@ -31,7 +31,7 @@ class GCG:
         self.top_k = top_k
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
-            stop_after_same_loss_steps: int | None = None) -> tuple[str, str, int]:
+            stop_after_same_loss_steps: int | None = 10, show_progress: bool = True) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -41,6 +41,7 @@ class GCG:
                                     If None, no evaluation is performed.
             stop_after_same_loss_steps: Number of steps to run with the same GCG loss value before stopping the attack.
                                          If None, no early stopping is performed.
+            show_progress: Whether to show a progress bar during the attack.
 
         Returns:
             x_attack_str: The final attack prompt.
@@ -59,7 +60,7 @@ class GCG:
         previous_losses: list[torch.Tensor] = []
 
         step: int = 0
-        for step in tqdm(range(self.num_steps), desc='Running GCG'):
+        for step in tqdm(range(self.num_steps), desc='Running GCG') if show_progress else range(self.num_steps):
             x_one_hot.unsqueeze_(0)
             x_one_hot.requires_grad_(True)
             x_one_hot, loss = self._run_step(x_one_hot, y_ids, y_embeds)
