@@ -19,7 +19,7 @@ def run_gcg_single_attack(gcg: gcg_algorithm.GCG, target_response: str):
 
 
 def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_output_file: pathlib.Path):
-    print('Attacking:', gcg_output_file.stem)
+    print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
     gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
                                                          target_response_len=10,
                                                          max_samples_to_attack=10_000)
