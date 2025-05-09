@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import os
 
@@ -64,6 +65,7 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         project='pag-llm',
         name=run_name,
         tags=tags,
+        config= dataclasses.asdict(cfg),
     )
 
     # Create trainer
