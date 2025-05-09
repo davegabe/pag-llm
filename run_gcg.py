@@ -22,7 +22,7 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
     gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
                                                          target_response_len=10,
-                                                         max_samples_to_attack=10_000)
+                                                         max_samples_to_attack=1_000)
     with gcg_output_file.open('w') as f:
         json.dump([r.to_dict() for r in gcg_results], f, indent=4)
     print(f"Saved GCG results to {gcg_output_file}")
