@@ -47,7 +47,7 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     # Some of them have multiple naming conventions, because of old, convoluted, names
     # left in the saved configuration in the corresponding .ckpt files.
     if cfg.training.method == "base":
-        lightning_model = BaseLMModel(model, tokenizer, cfg)
+        lightning_model = BaseLMModel('base', model, tokenizer, cfg)
     elif cfg.training.method in ("bert-like", "pag-mix-identity-score-embeddings"):
         lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method == "inv-first":
