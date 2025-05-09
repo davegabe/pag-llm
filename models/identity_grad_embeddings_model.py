@@ -35,6 +35,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
 
+        # Grad scaler
+        self.grad_scaler = torch.nn.Parameter(torch.ones(self.model.config.hidden_size))
+
     def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, dict]:
         """
@@ -101,7 +104,14 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
             # Dictionary to store gradient information for logging
             log_info = {}
-            
+
+            # Scale the gradients
+            positive_scaler = 10 ** self.grad_scaler
+            grad_x_embed = grad_x_embed * positive_scaler
+            self.log_dict({
+                f'{tag}/scaler_mean': positive_scaler.mean().clone().detach(),
+            }, sync_dist=True, prog_bar=True)
+
             # Forward pass to get the logits and probabilities
             logits = forward_grad_embeddings(self.model, grad_x_embed, log_info=log_info, tag=tag)
             assert logits.shape == (n_first, vocab_size), \
