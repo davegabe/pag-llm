@@ -99,10 +99,16 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             assert grad_x_embed.shape == (n_first, d), \
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
 
+            # Dictionary to store gradient information for logging
+            log_info = {}
+            
             # Forward pass to get the logits and probabilities
-            logits = forward_grad_embeddings(self.model, grad_x_embed)
+            logits = forward_grad_embeddings(self.model, grad_x_embed, log_info=log_info, tag=tag)
             assert logits.shape == (n_first, vocab_size), \
                 f'Expected logits to be of shape (n\'={n_first}, {vocab_size=}), but got {logits.shape}'
+                
+            # Log the log_info dictionary
+            self.log_dict(log_info, sync_dist=True)
 
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
