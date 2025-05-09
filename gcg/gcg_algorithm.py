@@ -3,8 +3,6 @@ import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from gcg.gcg_utils import set_seeds
-
 
 class GCG:
     def __init__(self, model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase, num_prefix_tokens: int,
@@ -48,8 +46,6 @@ class GCG:
             y_attack_response: The message returned by the model, after the attack.
             step: The number of steps run before stopping the attack.
         """
-        set_seeds()
-
         # Tokenize the input message
         y_ids, y_embeds = self._batch_embed_target_message(y_message)
         y_len = y_ids.size(-1)

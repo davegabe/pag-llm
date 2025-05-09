@@ -5,7 +5,7 @@ import torch
 from tqdm import tqdm
 
 from data.data_processor import TextDataset
-from gcg import gcg_algorithm
+from gcg import gcg_algorithm, gcg_utils
 
 
 @dataclass
@@ -83,6 +83,7 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
             attacks_total: Total number of attacks attempted
             steps_run: Total number of steps run for the successful attacks
         """
+    gcg_utils.set_seeds()
     prefix_len = gcg.num_prefix_tokens
 
     max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
