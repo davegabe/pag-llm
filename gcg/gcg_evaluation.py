@@ -68,6 +68,7 @@ class GCGResult:
 def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
                             dataset: TextDataset,
                             target_response_len: int,
+                            random_select_samples: bool = True,
                             max_samples_to_attack: int | None = None) -> list[GCGResult]:
     """
         Run GCG evaluation on the dataset.
@@ -76,6 +77,7 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
             gcg: GCG object
             dataset: Dataset to evaluate on
             target_response_len: Length of the target attack response we want to generate
+            random_select_samples: Whether to randomly select samples from the dataset or not
             max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
 
         Returns:
@@ -89,7 +91,9 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
     max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
     max_samples_to_attack = min(max_samples_to_attack, len(dataset))
 
-    samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
+    samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist() \
+        if random_select_samples \
+        else list(range(max_samples_to_attack))
 
     attacks: list[GCGResult] = []
 
