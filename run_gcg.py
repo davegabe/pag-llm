@@ -31,10 +31,7 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     print(f"Saved GCG results to {gcg_output_file}")
 
 
-def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.Path, batch_size: int = 128):
-    with gcg_output_file.open('r') as f:
-        gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
-
+def compute_success_rate(gcg_results: list[gcg_evaluation.GCGResult]) -> float:
     # Count the number of successfully attacked tokens
     num_successful_tokens = sum(
         result.get_success_tokens()
@@ -45,20 +42,26 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
         for result in gcg_results
     )
     token_attack_success_rate = num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0
-    print(f'Token attack success rate: {token_attack_success_rate:.2%}')
 
+    return token_attack_success_rate
+
+
+def compute_mean_steps_to_success(gcg_results: list[gcg_evaluation.GCGResult]) -> tuple[float, float]:
     # Count the average required steps to converge
     # Ignore attacks with less than 2 successful tokens
     successful_steps = [
         result.steps
         for result in gcg_results
-        if result.get_success_tokens() > 1
     ]
     mean_success_steps = sum(successful_steps) / len(successful_steps) if successful_steps else 0
     stddev_success_steps = (sum((x - mean_success_steps) ** 2 for x in successful_steps) / len(
         successful_steps)) ** 0.5 if successful_steps else 0
-    print(f'Mean steps to success: {mean_success_steps:.0f} ± {stddev_success_steps:.0f}')
 
+    return mean_success_steps, stddev_success_steps
+
+
+def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning_model: BaseLMModel,
+                          batch_size: int = 128) -> tuple:
     # Compute the KL-divergence and CE-loss of the target suffix, given both the attack and the original prefix
     tokenizer, llm = lightning_model.tokenizer, lightning_model.model
     overall_original_loss, overall_attack_loss, overall_kl_div = [], [], []
@@ -126,14 +129,33 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
     # Compute the mean of the losses
     original_loss = torch.cat(overall_original_loss)
     original_loss_mean, original_loss_stddev = original_loss.mean(), original_loss.std()
-    print(f'Mean original X CE-loss: {original_loss_mean:.2f} ± {original_loss_stddev:.2f}')
 
     attack_loss = torch.cat(overall_attack_loss)
     attack_loss_mean, attack_loss_stddev = attack_loss.mean(), attack_loss.std()
-    print(f'Mean attack X CE-loss: {attack_loss_mean:.2f} ± {attack_loss_stddev:.2f}')
 
     kl_div = torch.cat(overall_kl_div)
     kl_div_mean, kl_div_stddev = kl_div.mean(), kl_div.std()
+
+    return original_loss_mean, original_loss_stddev, attack_loss_mean, attack_loss_stddev, kl_div_mean, kl_div_stddev
+
+
+def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.Path, batch_size: int = 128):
+    with gcg_output_file.open('r') as f:
+        gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
+
+    token_attack_success_rate = compute_success_rate(gcg_results)
+    print(f'Token attack success rate: {token_attack_success_rate:.2%}')
+
+    successful_gcg_results = [result for result in gcg_results if result.get_success_tokens() > 1]
+
+    mean_success_steps, stddev_success_steps = compute_mean_steps_to_success(successful_gcg_results)
+    print(f'Mean steps to success: {mean_success_steps:.0f} ± {stddev_success_steps:.0f}')
+
+    # Compute the attack losses
+    original_loss_mean, original_loss_stddev, attack_loss_mean, attack_loss_stddev, kl_div_mean, \
+        kl_div_stddev = compute_attack_losses(successful_gcg_results, lightning_model, batch_size=batch_size)
+    print(f'Mean original X CE-loss: {original_loss_mean:.2f} ± {original_loss_stddev:.2f}')
+    print(f'Mean attack X CE-loss: {attack_loss_mean:.2f} ± {attack_loss_stddev:.2f}')
     print(f'Mean KL-divergence between original and attack Xs: {kl_div_mean:.2f} ± {kl_div_stddev:.2f}')
 
 
