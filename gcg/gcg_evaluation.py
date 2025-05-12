@@ -64,6 +64,12 @@ class GCGResult:
             steps=data['steps'],
         )
 
+    def get_success_tokens(self) -> int:
+        return sum(
+            1
+            for target_token, attack_response_token in zip(self.target_response_ids, self.y_attack_response_ids)
+            if target_token == attack_response_token
+        )
 
 def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
                             dataset: TextDataset,

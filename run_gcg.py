@@ -35,10 +35,8 @@ def analyze_gcg_results(gcg_output_file: pathlib.Path):
 
     # Count the number of successfully attacked tokens
     num_successful_tokens = sum(
-        1
+        result.get_success_tokens()
         for result in gcg_results
-        for target_token, attack_response_token in zip(result.target_response_ids, result.y_attack_response_ids)
-        if target_token == attack_response_token
     )
     num_total_tokens = sum(
         min(len(result.target_response_ids), len(result.y_attack_response_ids))
@@ -46,6 +44,19 @@ def analyze_gcg_results(gcg_output_file: pathlib.Path):
     )
     token_attack_success_rate = num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0
     print(f'Token attack success rate: {token_attack_success_rate:.2%}')
+
+    # Count the average required steps to converge
+    # Ignore attacks with less than 2 successful tokens
+    successful_steps = [
+        result.steps
+        for result in gcg_results
+        if result.get_success_tokens() > 1
+    ]
+    mean_success_steps = sum(successful_steps) / len(successful_steps) if successful_steps else 0
+    stddev_success_steps = (sum((x - mean_success_steps) ** 2 for x in successful_steps) / len(
+        successful_steps)) ** 0.5 if successful_steps else 0
+    print(f'Mean steps to success: {mean_success_steps:.0f} ± {stddev_success_steps:.0f}')
+
 
 
 @apply_config('inv-first-tiny-train')
