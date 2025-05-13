@@ -224,7 +224,12 @@ class GCG:
             torch.Tensor: The optimized attack input IDs, as one-hot vector.
             torch.Tensor: The loss of the optimized attack input IDs.
         """
+        assert attack_one_hot.ndim == 3 and attack_one_hot.size(0) == 1, \
+            f'Expected attack_one_hot to be of shape (1, {self.num_prefix_tokens}, {self.vocab_size}), but got {attack_one_hot.shape}'
+
         top_k_substitutions = self._compute_top_k_substitutions(attack_one_hot, target_ids, target_embeds)
+        assert top_k_substitutions.shape == (self.num_prefix_tokens, self.top_k), \
+            f'Expected top_k_substitutions to be of shape ({self.num_prefix_tokens}, {self.top_k}), but got {top_k_substitutions.shape}'
 
         proposed_prefixes = self._compute_random_replacements(attack_one_hot, top_k_substitutions)
 
