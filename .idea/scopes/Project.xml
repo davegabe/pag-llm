@@ -1,3 +1,3 @@
 <component name="DependencyValidationManager">
-  <scope name="Project" pattern="!ext:*/&amp;&amp;!file[pag-llm]:checkpoints/*&amp;&amp;!file[pag-llm]:downloaded_dataset/*&amp;&amp;!file[pag-llm]:wandb/*&amp;&amp;!file[pag-llm]:wandb//*&amp;&amp;!file[pag-llm]:downloaded_dataset//*&amp;&amp;!file[pag-llm]:checkpoints//*" />
+  <scope name="Project" pattern="file[pag-llm]:configs//*||file[pag-llm]:checkpoints//*||file[pag-llm]:data//*||file[pag-llm]:faster-gcg//*||file[pag-llm]:gcg_utils//*||file[pag-llm]:models//*||file[pag-llm]:pag_classification//*||file[pag-llm]:utils//*" />
 </component>
