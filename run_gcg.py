@@ -6,23 +6,24 @@ import torch.nn.functional as F
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import TextDataset
-from gcg import gcg_algorithm, gcg_evaluation
+from gcg import FasterGCG
+from gcg_utils import gcg_evaluation
 from instantiate import load_model_from_checkpoint
 from models.base_model import BaseLMModel
 
 
-def run_gcg_single_attack(gcg: gcg_algorithm.GCG, target_response: str):
-    x_attack_str, y_attack_response, _ = gcg.run(target_response,
-                                                 evaluate_every_n_steps=50,
-                                                 stop_after_same_loss_steps=10)
+def run_gcg_single_attack(gcg: FasterGCG, model: BaseLMModel, target_response: str):
+    x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(model.tokenizer, model.model, None, target_response,
+                                                                  show_progress=True)
     print(f"Attack string: {x_attack_str}")
-    print(f"Attack response: {y_attack_response}")
+    print(f"Attack response: {y_response_str}")
     print(f"Desired response: {target_response}")
+    print(f"Steps: {steps}")
 
 
-def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_output_file: pathlib.Path):
-    print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
-    gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
+def run_full_gcg_evaluation(gcg: FasterGCG, model: BaseLMModel, dataset: TextDataset, gcg_output_file: pathlib.Path):
+    print('Attacking:', model.model_name, 'on', model.device)
+    gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, model, dataset,
                                                          target_response_len=10,
                                                          max_samples_to_attack=1_000,
                                                          random_select_samples=False)
@@ -188,22 +189,21 @@ def main(cfg: CustomLLMPagConfig):
     lightning_model.to(torch_device).eval()
 
     # Run GCG
-    gcg = gcg_algorithm.GCG(
-        model=lightning_model.model,
-        tokenizer=lightning_model.tokenizer,
-        num_prefix_tokens=15,
-        num_steps=10_000,
-        search_width=1000,
-        top_k=64,
+    gcg = FasterGCG(
+        num_iterations=10_000,
+        batch_size=900,
+        adversarial_tokens_length=15,
+        top_k_substitutions_length=64,
+        vocab_size=lightning_model.tokenizer.vocab_size,
     )
-    # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
+    run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
 
-    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
-    if gcg_output_file.exists():
-        print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
-    else:
-        run_full_gcg_evaluation(gcg, data_module.val_dataset, gcg_output_file)
-    analyze_gcg_results(lightning_model, gcg_output_file)
+    # gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
+    # if gcg_output_file.exists():
+    #     print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
+    # else:
+    #     run_full_gcg_evaluation(gcg, data_module.val_dataset, gcg_output_file)
+    # analyze_gcg_results(lightning_model, gcg_output_file)
 
 
 if __name__ == '__main__':
