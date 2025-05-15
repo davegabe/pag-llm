@@ -4,8 +4,10 @@ from typing import Any
 import torch
 from tqdm import tqdm
 
+import gcg_utils
 from data.data_processor import TextDataset
-from gcg import gcg_algorithm, gcg_utils
+from gcg import FasterGCG
+from models.base_model import BaseLMModel
 
 
 @dataclass
@@ -71,28 +73,32 @@ class GCGResult:
             if target_token == attack_response_token
         )
 
-def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
+
+def evaluate_model_with_gcg(gcg: FasterGCG,
+                            lightning_module: BaseLMModel,
                             dataset: TextDataset,
                             target_response_len: int,
                             random_select_samples: bool = True,
                             max_samples_to_attack: int | None = None) -> list[GCGResult]:
     """
-        Run GCG evaluation on the dataset.
+    Run GCG evaluation on the dataset.
 
-        Args:
-            gcg: GCG object
-            dataset: Dataset to evaluate on
-            target_response_len: Length of the target attack response we want to generate
-            random_select_samples: Whether to randomly select samples from the dataset or not
-            max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
+    Args:
+        gcg: GCG object
+        lightning_module: Lightning module containing the target model and tokenizer to use in the attack
+        dataset: Dataset to evaluate on
+        target_response_len: Length of the target attack response we want to generate
+        random_select_samples: Whether to randomly select samples from the dataset or not
+        max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
 
-        Returns:
-            attack_success: Number of successful attacks
-            attacks_total: Total number of attacks attempted
-            steps_run: Total number of steps run for the successful attacks
-        """
+    Returns:
+        attack_success: Number of successful attacks
+        attacks_total: Total number of attacks attempted
+        steps_run: Total number of steps run for the successful attacks
+    """
     gcg_utils.set_seeds()
-    prefix_len = gcg.num_prefix_tokens
+    prefix_len = gcg.adversarial_tokens_length
+    model, tokenizer = lightning_module.model, lightning_module.tokenizer
 
     max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
     max_samples_to_attack = min(max_samples_to_attack, len(dataset))
@@ -113,20 +119,20 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
 
         # Split into prefix and target response
         original_prefix_ids = input_ids[:prefix_len]
-        # original_prefix_str = gcg.tokenizer.decode(original_prefix_ids)
+        # original_prefix_str = gcg_utils.tokenizer.decode(original_prefix_ids)
         target_response_ids = input_ids[prefix_len:prefix_len + target_response_len]
-        target_response_str = gcg.tokenizer.decode(target_response_ids)
+        target_response_str = tokenizer.decode(target_response_ids)
 
         # Run the attack
-        x_attack_str, y_attack_response, steps = gcg.run(target_response_str, show_progress=False)
+        x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(tokenizer, model, None, target_response_str)
         # noinspection PyTypeChecker
-        y_attack_response_ids: torch.Tensor = gcg.tokenizer.encode(y_attack_response, return_tensors='pt')[0]
+        y_response_ids: torch.Tensor = tokenizer.encode(y_response_str, return_tensors='pt')
 
         attacks.append(GCGResult(
             original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
             target_response_ids=target_response_ids.detach().cpu().tolist(),
             x_attack_str=x_attack_str,
-            y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
+            y_attack_response_ids=y_response_ids.detach().cpu().tolist(),
             steps=steps,
         ))
 
