@@ -3,29 +3,37 @@ import torch.nn.functional as F
 from transformers import PreTrainedModel
 
 
-def forward_grad_embeddings(model: PreTrainedModel, grad_x_embed: torch.Tensor, log_info: dict = None, tag: str = 'undefined') -> torch.Tensor:
+def forward_grad_embeddings(
+        model: PreTrainedModel,
+        grad_x_embed: torch.Tensor,
+        norm: torch.nn.Module = None,
+        tag: str = 'undefined',
+        log_info: dict[str, torch.Tensor] = None,
+) -> torch.Tensor: 
     """
     Project the gradients of the embeddings to the vocabulary space using the head of the model.
 
     Args:
         model (PreTrainedModel): The pre-trained model to fine-tune.
         grad_x_embed (torch.Tensor): The gradients of the embeddings. [batch_size, seq_len, embed_dim]
-        log_info (dict, optional): Dictionary to store gradient information for logging.
+        norm (torch.nn.Module): The normalization layer of the model. Defaults to model.model.norm.
         tag (str, optional): Tag for logging. Defaults to 'undefined'.
+        log_info (dict[str, torch.Tensor], optional): Dictionary to store logging information. Defaults to None.
 
     Returns:
         logits (torch.Tensor): The logits of the model. [batch_size, seq_len, vocab_size]
     """
+    if norm is None:
+        norm = model.model.norm
+
     # Store the mean of the gradients before normalization
-    if log_info is not None:
-        log_info[f"{tag}/before_norm_mean"] = grad_x_embed.mean().clone().detach()
+    log_info[f"{tag}/before_norm_mean"] = grad_x_embed.mean().clone().detach()
         
     # Apply the model normalization to the gradients
-    grad_x_embed = model.model.norm(grad_x_embed)  # [batch_size, embed_dim]
+    grad_x_embed = norm(grad_x_embed)  # [batch_size, embed_dim]
     
     # Store the mean of the gradients after normalization
-    if log_info is not None:
-        log_info[f"{tag}/after_norm_mean"] = grad_x_embed.mean().clone().detach()
+    log_info[f"{tag}/after_norm_mean"] = grad_x_embed.mean().clone().detach()
 
     # Create copy of lm_head weights to avoid affecting existing gradients
     lm_head_weight = model.lm_head.weight.clone().detach()

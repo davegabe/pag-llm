@@ -61,8 +61,8 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
 
     wandb_logger = WandbLogger(
-        entity='pag-llm-team',
-        project='pag-llm',
+        entity=os.environ.get("WANDB_ENTITY", "dwawad"),
+        project=os.environ.get("WANDB_PROJECT", "pag-llm"),
         name=run_name,
         tags=tags,
         config= dataclasses.asdict(cfg),
