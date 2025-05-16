@@ -196,7 +196,7 @@ def main(cfg: CustomLLMPagConfig):
         top_k_substitutions_length=64,
         vocab_size=lightning_model.tokenizer.vocab_size,
     )
-    run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
+    # run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
 
     gcg_output_file = cfg.model.output_dir / f'faster_gcg_{model_name}.json'
     if gcg_output_file.exists():
