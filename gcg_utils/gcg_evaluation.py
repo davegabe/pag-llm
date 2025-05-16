@@ -1,10 +1,12 @@
+import os
 from dataclasses import dataclass
 from typing import Any
 
+import numpy as np
 import torch
+import transformers
 from tqdm import tqdm
 
-import gcg_utils
 from data.data_processor import TextDataset
 from gcg import FasterGCG
 from models.base_model import BaseLMModel
@@ -96,7 +98,7 @@ def evaluate_model_with_gcg(gcg: FasterGCG,
         attacks_total: Total number of attacks attempted
         steps_run: Total number of steps run for the successful attacks
     """
-    gcg_utils.set_seeds()
+    set_seeds()
     prefix_len = gcg.adversarial_tokens_length
     model, tokenizer = lightning_module.model, lightning_module.tokenizer
 
@@ -137,3 +139,22 @@ def evaluate_model_with_gcg(gcg: FasterGCG,
         ))
 
     return attacks
+
+
+def set_seeds(seed=444):
+    """
+    Set the random seed for reproducibility (NumPy, PyTorch, and Transformers).
+    """
+    # Set the random seed for NumPy
+    np.random.seed(seed)
+    # Use deterministic cuDNN algorithms
+    os.environ['CUBLAS_WORKSPACE_CONFIG'] = ":4096:8"
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    # Set the random seed for PyTorch
+    torch.manual_seed(seed)
+    # If you are using CUDA (i.e., a GPU), also set the seed for it
+    torch.cuda.manual_seed_all(seed)
+    # Set the hf transformer seed
+    transformers.set_seed(seed)
