@@ -128,7 +128,7 @@ def evaluate_model_with_gcg(gcg: FasterGCG,
         # Run the attack
         x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(tokenizer, model, None, target_response_str)
         # noinspection PyTypeChecker
-        y_response_ids: torch.Tensor = tokenizer.encode(y_response_str, return_tensors='pt')
+        y_response_ids: torch.Tensor = tokenizer.encode(y_response_str, return_tensors='pt')[0]
 
         attacks.append(GCGResult(
             original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
