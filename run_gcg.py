@@ -13,8 +13,9 @@ from models.base_model import BaseLMModel
 
 
 def run_gcg_single_attack(gcg: FasterGCG, model: BaseLMModel, target_response: str):
-    x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(model.tokenizer, model.model, None, target_response,
-                                                                  show_progress=True)
+    _, _, x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(model.tokenizer, model.model,
+                                                                        None, target_response,
+                                                                        show_progress=True)
     print(f"Attack string: {x_attack_str}")
     print(f"Attack response: {y_response_str}")
     print(f"Desired response: {target_response}")
@@ -73,8 +74,7 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
         original_prefix_ids = torch.tensor([result.original_prefix_ids for result in batch], device=llm.device)
         target_response_ids = torch.tensor([result.target_response_ids for result in batch], device=llm.device)
         y_attack_response_ids = torch.tensor([result.y_attack_response_ids for result in batch], device=llm.device)
-        x_attack_ids = tokenizer.batch_encode_plus([result.x_attack_str for result in batch],
-                                                   return_tensors='pt')['input_ids'].to(llm.device)
+        x_attack_ids = torch.tensor([result.x_attack_ids for result in batch], device=llm.device)
 
         prefix_len = original_prefix_ids.size(1)
         batch_size, suffix_len = y_attack_response_ids.shape
