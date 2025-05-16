@@ -195,6 +195,7 @@ def main(cfg: CustomLLMPagConfig):
         adversarial_tokens_length=15,
         top_k_substitutions_length=64,
         vocab_size=lightning_model.tokenizer.vocab_size,
+        lambda_reg_embeddings_distance=0.1,
     )
     # run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
 
