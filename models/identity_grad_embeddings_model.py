@@ -91,8 +91,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         assert valid_tokens.ndim == 1, \
             f'Expected valid_tokens to be of shape (n\', ), but got {valid_tokens.shape}'
 
-        # Calculate gradient-based loss if we're past the warmup period
-        if self.current_epoch >= self.warmup_pretrain_epochs:
+        # Calculate gradient-based loss if we're past the warmup period and lambda_loss_pag > 0
+        if self.current_epoch >= self.warmup_pretrain_epochs and self.lambda_loss_pag > 0:
             # Get the gradients on the first token
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
             # Take only the valid gradients
