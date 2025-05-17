@@ -3,6 +3,7 @@ import torch
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
 from transformers.modeling_outputs import CausalLMOutputWithPast
+from transformers.models.llama.modeling_llama import LlamaRMSNorm
 
 from config import LLMPagConfig
 from data.data_processor import BatchType
@@ -36,7 +37,10 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         print(f"Test model with mask values: {self.mask_values}")
 
         # Use default normalization layer
-        self.emb_norm = None
+        self.emb_norm = LlamaRMSNorm(
+            self.model.config.hidden_size,
+            eps=self.model.config.rms_norm_eps,
+        )
 
     def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, dict]:

@@ -3,8 +3,8 @@ _target_: config.CustomLLMPagConfig
 training:
   _target_: config.TrainingConfig
   learning_rate: 0.004
-  batch_size: 128
-  gradient_accumulation_steps: 1
+  batch_size: 32
+  gradient_accumulation_steps: 4
   warmup_pretrain_epochs: 0
   num_epochs: 15
   warmup_steps: 100
@@ -16,7 +16,7 @@ training:
     _target_: config.LoraTConfig
   # Hyperparameters to give different importance to parts of the loss function
   lambda_loss_ce: 1.0
-  lambda_loss_pag: 2.0
+  lambda_loss_pag: 0.1
   run_evaluation_before_training: False
 
 model:

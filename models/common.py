@@ -35,15 +35,16 @@ def forward_grad_embeddings(
     # Store the mean of the gradients after normalization
     log_info[f"{tag}/after_norm_mean"] = grad_x_embed.mean().clone().detach()
 
-    # Create copy of lm_head weights to avoid affecting existing gradients
-    lm_head_weight = model.lm_head.weight.clone().detach()
+    # Use the model's lm_head to project the gradients to the vocabulary space
+    lm_head_weight = model.lm_head.weight
 
+    # Load the bias if it exists
     if hasattr(model.lm_head, 'bias') and model.lm_head.bias is not None:
-        lm_head_bias = model.lm_head.bias.clone().detach()
+        lm_head_bias = model.lm_head.bias
     else:
         lm_head_bias = None
 
-    # Manually compute the projection using copied weights
+    # Manually compute the projection using the lm_head
     logits = F.linear(grad_x_embed, lm_head_weight, lm_head_bias)
 
     return logits
