@@ -145,6 +145,7 @@ def load_and_process_dataset(
         dataset_config: DatasetConfig,
         tokenizer: PreTrainedTokenizerFast,
         max_length: int,
+        overfit: bool = False,
         text_column: str = 'text'
 ) -> tuple[TextDataset, TextDataset]:
     """
@@ -154,6 +155,7 @@ def load_and_process_dataset(
         dataset_config (DatasetConfig): The dataset configuration
         tokenizer (PreTrainedTokenizerFast): The tokenizer to use for encoding text.
         max_length (int): The maximum length of the input text.
+        overfit (bool): If True, use a small subset of the dataset for debugging.
         text_column (str): The column name of the text data.
 
     Returns:
@@ -167,6 +169,17 @@ def load_and_process_dataset(
         data_files=dataset_config.data_files,
     )
 
+    # Check if overfitting is enabled (for debugging purposes)
+    if overfit:
+        # Use only the first 32 samples for both train and eval
+        split_overfit = Subset(
+            raw_dataset[dataset_config.train_split],
+            range(32)
+        )
+        raw_dataset[dataset_config.train_split] = split_overfit
+        raw_dataset[dataset_config.eval_split] = split_overfit
+        print(f"WARNING: Overfitting mode enabled. Using only {len(split_overfit)} samples for both train and eval.")
+    
     # Check if the dataset has the specified splits
     if dataset_config.eval_split not in raw_dataset:
         # Create custom splits

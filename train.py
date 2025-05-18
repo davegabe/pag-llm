@@ -74,9 +74,10 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         accelerator="auto",
         devices=cfg.training.device if cfg.training.device else "auto",
         logger=wandb_logger,
-        callbacks=[checkpoint_callback, lr_monitor],
+        callbacks=[checkpoint_callback, lr_monitor] if not cfg.training.overfit else None,
         log_every_n_steps=cfg.logging.logging_steps,
         val_check_interval=cfg.logging.evaluation_steps,
+        check_val_every_n_epoch=1 if not cfg.training.overfit else None,
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
         gradient_clip_val=1.0,
     )

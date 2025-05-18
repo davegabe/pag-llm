@@ -36,6 +36,7 @@ class TrainingConfig:
     lambda_loss_ce: float
     lambda_loss_pag: float
 
+    overfit: bool = False # For debugging purposes
     run_evaluation_before_training: bool = True
     device: str | None = None
 

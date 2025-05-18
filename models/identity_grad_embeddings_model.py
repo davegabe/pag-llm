@@ -37,9 +37,14 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         print(f"Test model with mask values: {self.mask_values}")
 
         # Use default normalization layer
-        self.emb_norm = LlamaRMSNorm(
-            self.model.config.hidden_size,
-            eps=self.model.config.rms_norm_eps,
+        self.emb_norm = None
+
+        # Create a sequential model to project the gradients to the embedding space
+        self.projection = torch.nn.Sequential(
+            torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+            torch.nn.ReLU(),
+            torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
+            torch.nn.ReLU(),
         )
 
     def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
@@ -108,6 +113,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             
             # Normalize the gradients based on the norm of the gradient
             grad_x_embed = grad_x_embed / grad_x_embed.norm(dim=-1, keepdim=True)
+
+            # Project the gradients to the embedding space
+            grad_x_embed = self.projection(grad_x_embed)
 
             # Dictionary to store gradient information for logging
             log_info = {}
