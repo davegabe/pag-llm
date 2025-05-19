@@ -2,11 +2,11 @@ _target_: config.CustomLLMPagConfig
 
 training:
   _target_: config.TrainingConfig
-  learning_rate: 0.01
+  learning_rate: 0.004
   batch_size: 16
   gradient_accumulation_steps: 1
   warmup_pretrain_epochs: 0
-  overfit: True
+  overfit: False
   num_epochs: 1000
   warmup_steps: 100
   weight_decay: 0.01
