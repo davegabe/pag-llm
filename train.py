@@ -79,7 +79,6 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         val_check_interval=cfg.logging.evaluation_steps,
         check_val_every_n_epoch=1 if not cfg.training.overfit else None,
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
-        gradient_clip_val=1.0,
     )
 
     # Evaluate model before training

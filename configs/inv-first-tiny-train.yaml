@@ -2,12 +2,12 @@ _target_: config.CustomLLMPagConfig
 
 training:
   _target_: config.TrainingConfig
-  learning_rate: 0.004
-  batch_size: 32
-  gradient_accumulation_steps: 4
-  warmup_pretrain_epochs: 70
-  overfit: True # Set to True to overfit on a small dataset
-  num_epochs: 10000
+  learning_rate: 0.01
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  warmup_pretrain_epochs: 0
+  overfit: True
+  num_epochs: 1000
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256

@@ -39,6 +39,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Use default normalization layer
         self.emb_norm = None
 
+        self.automatic_optimization = False  # Enable manual optimization
+
         # Create a sequential model to project the gradients to the embedding space
         self.projection = torch.nn.Sequential(
             torch.nn.Linear(model.config.hidden_size, model.config.hidden_size),
@@ -179,9 +181,75 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.model.zero_grad()
 
         return loss
-
+    
     def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
-        return self._step(batch, 'train')
+        # Get optimizer
+        optimizer = self.optimizers()
+        optimizer.zero_grad()
+        print(f"LR: {optimizer.param_groups[0]['lr']}")
+        
+        # Compute losses using common function
+        loss_ce, loss_grads, _, top_k_accuracies = self._compute_losses(
+            batch, self.k_samples, 'train',
+        )
+        
+        # Log metrics
+        perplexity = torch.exp(loss_ce)
+        combined_loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
+        self.log_dict({
+            'train/loss_ce': loss_ce,
+            'train/loss_first_inv': loss_grads,
+            'train/loss': combined_loss,
+            'train/perplexity': perplexity,
+        }, prog_bar=True, sync_dist=True)
+        
+        if len(top_k_accuracies) > 0:
+            self.log_dict(top_k_accuracies, sync_dist=True)
+        
+        # Step 1: Backward PAG loss only if not in warmup period
+        if self.current_epoch >= self.warmup_pretrain_epochs and self.lambda_loss_pag > 0:
+            # Identify protected parameters (embedding and lm_head)
+            embedding_layer = self.model.get_input_embeddings()
+            lm_head = self.model.lm_head
+
+            # Check if weight tie is active, if embedding layer and lm_head are the same
+            protected_params = []
+            if embedding_layer.weight is lm_head.weight:
+                protected_params = [embedding_layer.parameters()]
+            else:
+                # If not weight tied, add both separately
+                protected_params = [embedding_layer.parameters(), lm_head.parameters()]
+
+            # Get all other parameters
+            all_params = list(self.model.parameters())
+            # Filter out protected parameters
+            all_params = [p for p in all_params if p not in protected_params]
+            # Filter out the projection layer
+            all_params = [p for p in all_params if p not in [self.projection.parameters()]]
+            
+            # Backward PAG loss
+            scaled_pag_loss = self.lambda_loss_pag * loss_grads
+            self.manual_backward(scaled_pag_loss, retain_graph=True)
+
+            # # Set protected parameters (lm_head and embedding) to zero gradients
+            # for param in protected_params:
+            #     for p in param:
+            #         if p.grad is not None:
+            #             p.grad.data.zero_()
+
+            # Set all other parameters (of the llm) to zero gradients
+            for param in all_params:
+                if param.grad is not None:
+                    param.grad.data.zero_()
+        
+        # Step 2: Backward CE loss for all parameters
+        scaled_ce_loss = self.lambda_loss_ce * loss_ce
+        self.manual_backward(scaled_ce_loss)
+        
+        # Single optimizer step
+        optimizer.step()
+        
+        return combined_loss
 
     def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         with torch.inference_mode(mode=False):

@@ -28,18 +28,18 @@ class BaseLMModel(pl.LightningModule):
             weight_decay=self.config.training.weight_decay
         )
 
-        scheduler = get_linear_schedule_with_warmup(
-            optimizer,
-            num_warmup_steps=self.config.training.warmup_steps,
-            num_training_steps=self.trainer.estimated_stepping_batches
-        )
+        # scheduler = get_linear_schedule_with_warmup(
+        #     optimizer,
+        #     num_warmup_steps=self.config.training.warmup_steps,
+        #     num_training_steps=self.trainer.estimated_stepping_batches
+        # )
 
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {
-                "scheduler": scheduler,
-                "interval": "step"
-            }
+            # "lr_scheduler": {
+            #     "scheduler": scheduler,
+            #     "interval": "step"
+            # }
         }
 
     def on_save_checkpoint(self, checkpoint):
