@@ -17,8 +17,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
             grad_logits_sign: int = 1,
+            model_name: str = 'identity',
     ):
-        super().__init__('identity', model, tokenizer, config)
+        super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs

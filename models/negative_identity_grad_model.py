@@ -11,4 +11,4 @@ class NegativeIdentityGradEmbeddingsModel(IdentityGradEmbeddingsModel):
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
     ):
-        super().__init__(model, tokenizer, config, grad_logits_sign=-1)
+        super().__init__(model, tokenizer, config, grad_logits_sign=-1, model_name='negative_identity')
