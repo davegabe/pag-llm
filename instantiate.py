@@ -9,6 +9,7 @@ from models.base_model import BaseLMModel
 from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
 from models.inv_first_token import InvFirstTokenModel
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
+from models.multi_inv_first_token import MultiInvFirstTokenModel
 from models.negative_identity_grad_model import NegativeIdentityGradEmbeddingsModel
 
 
@@ -57,6 +58,8 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
         lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method == "negative-identity-grad":
         lightning_model = NegativeIdentityGradEmbeddingsModel(model, tokenizer, cfg)
+    elif cfg.training.method == "multi-inv-first":
+        lightning_model = MultiInvFirstTokenModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
 
