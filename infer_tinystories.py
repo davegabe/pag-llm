@@ -42,6 +42,27 @@ def generate_standard_sampling(lightning_model: BaseLMModel, input_ids: torch.Te
     return outputs
 
 
+def generate_beam_sampling(lightning_model: BaseLMModel, input_ids: torch.Tensor,
+                           attention_mask: torch.Tensor) -> torch.Tensor:
+    """
+    Generate text using Beam Search sampling.
+    """
+    # Generate text
+    outputs = lightning_model.model.generate(
+        input_ids,
+        attention_mask=attention_mask,
+        max_length=256,
+        num_return_sequences=1,
+        no_repeat_ngram_size=2,  # To avoid repeating text
+        # top_p=0.8,  # Nucleus sampling
+        do_sample=True,
+        temperature=1.0,
+        num_beams=5,
+        pad_token_id=lightning_model.tokenizer.pad_token_id,  # Explicitly set pad token id
+    )
+    return outputs
+
+
 def generate_nucleus_sampling(lightning_model: BaseLMModel, input_ids: torch.Tensor,
                               attention_mask: torch.Tensor) -> torch.Tensor:
     """
@@ -76,7 +97,7 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         encoded_input = lightning_model.tokenizer(prompt, return_tensors="pt", padding=True).to(lightning_model.device)
 
         # Generate text
-        outputs = generate_nucleus_sampling(lightning_model, encoded_input['input_ids'],
+        outputs = generate_standard_sampling(lightning_model, encoded_input['input_ids'],
                                             encoded_input['attention_mask'])
 
         # Decode and return generated text
