@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
 from config import CustomLLMPagConfig, apply_config
@@ -9,13 +10,13 @@ from models.common import forward_grad_embeddings
 
 
 @torch.no_grad()
-def backward_infer_prefix(lightning_module: BaseLMModel,
-                          use_init: str,
-                          reverse_bigram: torch.Tensor | None,
-                          suffix_input_ids: torch.Tensor,
-                          suffix_attention_mask: torch.Tensor,
-                          suffix_length: int,
-                          beam_size: int) -> tuple[torch.Tensor, torch.Tensor]:
+def backward_infer_prefix_beam_search(lightning_module: BaseLMModel,
+                                      use_init: str,
+                                      reverse_bigram: torch.Tensor | None,
+                                      suffix_input_ids: torch.Tensor,
+                                      suffix_attention_mask: torch.Tensor,
+                                      suffix_length: int,
+                                      beam_size: int) -> tuple[torch.Tensor, torch.Tensor]:
     """
     Perform backward inference on the given suffix input IDs and attention mask.
 
@@ -32,6 +33,83 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         torch.Tensor: The updated input IDs with the predicted token at the first position.
         torch.Tensor: The updated attention mask with the first position set to 1.
     """
+    logits, x_input_ids, x_attention_mask = _backward_infer_prefix_logits(
+        lightning_module=lightning_module,
+        use_init=use_init,
+        reverse_bigram=reverse_bigram,
+        suffix_input_ids=suffix_input_ids,
+        suffix_attention_mask=suffix_attention_mask,
+        beam_size=beam_size,
+    )
+    batch_size, vocab_size = logits.shape
+    seq_len = suffix_input_ids.size(-1)
+    prefix_length = seq_len - suffix_length + 1
+
+    # Take the top-K logits, where K is the beam size
+    # (token id = index in the vocabulary)
+    _, top_k_tokens = torch.topk(logits, beam_size, dim=-1, largest=True, sorted=False)
+    assert top_k_tokens.shape == (batch_size, beam_size), \
+        f'top_k_tokens shape mismatch: {top_k_tokens.shape} != ({batch_size}, {beam_size})'
+    assert top_k_tokens.dtype == torch.int64, \
+        f'top_k_tokens dtype mismatch: {top_k_tokens.dtype} != torch.int64'
+
+    # Now, we must increase the batch size, multiplying it by the beam size
+    # and repeat the input_ids and attention_mask
+    # Remember that repeat_interleave makes the original tensor [1,2,3] -> [1,1,2,2,3,3]
+    x_input_ids = x_input_ids.repeat_interleave(beam_size, dim=0)
+    x_attention_mask = x_attention_mask.repeat_interleave(beam_size, dim=0)
+    assert x_input_ids.shape == (batch_size * beam_size, seq_len + 1), \
+        f'input_ids shape mismatch: {x_input_ids.shape} != ({batch_size * beam_size}, {seq_len + 1})'
+    assert x_attention_mask.shape == (batch_size * beam_size, seq_len + 1), \
+        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({batch_size * beam_size}, {seq_len + 1})'
+
+    # Append to every sentence in the batch, their corresponding top-k tokens
+    for sample_i in range(batch_size):
+        # We have to set to the portion of x_input_ids that refers to the first sample in the original batch
+        # the top-k tokens.
+        x_input_ids[sample_i * beam_size:(sample_i + 1) * beam_size, 0] = top_k_tokens[sample_i]
+
+    # For each sample, keep only the top-k sentence with lower perplexity
+    x_input_ids, x_attention_mask, perplexities = get_least_perplexity_sentences(lightning_module, x_input_ids,
+                                                                                 x_attention_mask, beam_size,
+                                                                                 prefix_length)
+    assert x_input_ids.shape == (beam_size, seq_len + 1), \
+        f'input_ids shape mismatch: {x_input_ids.shape} != ({beam_size}, {seq_len + 1})'
+    assert x_attention_mask.shape == (beam_size, seq_len + 1), \
+        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({beam_size}, {seq_len + 1})'
+
+    # predicted_texts = lightning_module.tokenizer.batch_decode(x_input_ids[:, :10], skip_special_tokens=True)
+    # print(f"BEAM:")
+    # for i, (perplexity, text) in enumerate(zip(perplexities, predicted_texts)):
+    #     print(f"  - {i}: [{perplexity}] {text}")
+    # print()
+
+    return x_input_ids, x_attention_mask
+
+
+@torch.no_grad()
+def _backward_infer_prefix_logits(lightning_module: BaseLMModel,
+                                  use_init: str,
+                                  reverse_bigram: torch.Tensor | None,
+                                  suffix_input_ids: torch.Tensor,
+                                  suffix_attention_mask: torch.Tensor,
+                                  beam_size: int) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """
+    Perform backward inference on the given suffix input IDs and attention mask.
+
+    Args:
+        lightning_module (BaseLMModel): The model to use for inference.
+        use_init (str): The initialization strategy to use ('bigram', 'random', or 'pad').
+        reverse_bigram (torch.Tensor): The reverse bigram tensor. Required for 'bigram' initialization.
+        suffix_input_ids (torch.Tensor): The input IDs of the suffix.
+        suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
+        beam_size (int): The beam size for the inference.
+
+    Returns:
+        torch.Tensor: logits for the predicted token at the first position.
+        torch.Tensor: The updated input IDs with the init token at the first position.
+        torch.Tensor: The updated attention mask with the first position set to 1.
+    """
     assert reverse_bigram is not None or use_init != 'bigram', \
         'reverse_bigram must be provided for bigram initialization'
 
@@ -45,11 +123,10 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         f'input_ids shape mismatch: {suffix_input_ids.shape} != (batch_size, seq_len)'
 
     assert suffix_input_ids.size(0) in (1, beam_size), \
-        f'input_ids batch size must be 1 (single sample) or the beam size. Found: {suffix_input_ids.shape[0]}'
+        f'input_ids batch size must be 1 (single sample) or beam size (= {beam_size}). Found: {suffix_input_ids.shape[0]}'
 
     batch_size, seq_len = suffix_input_ids.shape
     vocab_size = lightning_module.tokenizer.vocab_size
-    prefix_length = seq_len - suffix_length + 1
 
     x_input_ids = torch.cat([
         torch.zeros_like(suffix_input_ids[:, :1]),
@@ -103,45 +180,86 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
     assert logits.shape == (batch_size, vocab_size), \
         f'logits shape mismatch: {logits.shape} != ({batch_size}, {vocab_size})'
 
-    # Take the top-K logits, where K is the beam size
-    # (token id = index in the vocabulary)
-    _, top_k_tokens = torch.topk(logits, beam_size, dim=-1, largest=True, sorted=False)
-    assert top_k_tokens.shape == (batch_size, beam_size), \
-        f'top_k_tokens shape mismatch: {top_k_tokens.shape} != ({batch_size}, {beam_size})'
-    assert top_k_tokens.dtype == torch.int64, \
-        f'top_k_tokens dtype mismatch: {top_k_tokens.dtype} != torch.int64'
+    return logits, x_input_ids, x_attention_mask
 
-    # Now, we must increase the batch size, multiplying it by the beam size
-    # and repeat the input_ids and attention_mask
-    # Remember that repeat_interleave makes the original tensor [1,2,3] -> [1,1,2,2,3,3]
-    x_input_ids = x_input_ids.repeat_interleave(beam_size, dim=0)
-    x_attention_mask = x_attention_mask.repeat_interleave(beam_size, dim=0)
-    assert x_input_ids.shape == (batch_size * beam_size, seq_len + 1), \
-        f'input_ids shape mismatch: {x_input_ids.shape} != ({batch_size * beam_size}, {seq_len + 1})'
-    assert x_attention_mask.shape == (batch_size * beam_size, seq_len + 1), \
-        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({batch_size * beam_size}, {seq_len + 1})'
 
-    # Append to every sentence in the batch, their corresponding top-k tokens
-    for sample_i in range(batch_size):
-        # We have to set to the portion of x_input_ids that refers to the first sample in the original batch
-        # the top-k tokens.
-        x_input_ids[sample_i * beam_size:(sample_i + 1) * beam_size, 0] = top_k_tokens[sample_i]
+@torch.no_grad()
+def backward_infer_prefix_nucleus_sampling(lightning_module: BaseLMModel,
+                                           use_init: str,
+                                           reverse_bigram: torch.Tensor | None,
+                                           suffix_input_ids: torch.Tensor,
+                                           suffix_attention_mask: torch.Tensor,
+                                           nucleus_p: float = 0.95,
+                                           temperature: float = 1.0) -> tuple[torch.Tensor, torch.Tensor]:
+    """
+    Perform backward inference on the given suffix input IDs and attention mask using Nucleus Sampling.
+    This function computes the logits for the next token and selects it using Nucleus Sampling.
+    It is a variant of the backward inference that uses Nucleus Sampling instead of beam search.
 
-    # For each sample, keep only the top-k sentence with lower perplexity
-    x_input_ids, x_attention_mask, perplexities = get_least_perplexity_sentences(lightning_module, x_input_ids,
-                                                                                 x_attention_mask, beam_size,
-                                                                                 prefix_length)
-    assert x_input_ids.shape == (beam_size, seq_len + 1), \
-        f'input_ids shape mismatch: {x_input_ids.shape} != ({beam_size}, {seq_len + 1})'
-    assert x_attention_mask.shape == (beam_size, seq_len + 1), \
-        f'attention_mask shape mismatch: {x_attention_mask.shape} != ({beam_size}, {seq_len + 1})'
+    Args:
+        lightning_module (BaseLMModel): The model to use for inference.
+        use_init (str): The initialization strategy to use ('bigram', 'random', or 'pad').
+        reverse_bigram (torch.Tensor | None): The reverse bigram tensor. Required for 'bigram' initialization.
+        suffix_input_ids (torch.Tensor): The input IDs of the suffix.
+        suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
+        nucleus_p (float): The probability threshold for Nucleus Sampling.
 
-    # predicted_texts = lightning_module.tokenizer.batch_decode(x_input_ids[:, :10], skip_special_tokens=True)
-    # print(f"BEAM:")
-    # for i, (perplexity, text) in enumerate(zip(perplexities, predicted_texts)):
-    #     print(f"  - {i}: [{perplexity}] {text}")
-    # print()
+    Returns:
+        torch.Tensor: The updated input IDs with the predicted token at the first position.
+        torch.Tensor: The updated attention mask with the first position set to 1.
+    """
+    assert 0.1 <= nucleus_p < 1.0, \
+        f'nucleus_p must be in [0.1, 1.0), but got {nucleus_p}'
 
+    logits, x_input_ids, x_attention_mask = _backward_infer_prefix_logits(
+        lightning_module=lightning_module,
+        use_init=use_init,
+        reverse_bigram=reverse_bigram,
+        suffix_input_ids=suffix_input_ids,
+        suffix_attention_mask=suffix_attention_mask,
+        beam_size=1,
+    )
+    batch_size, vocab_size = logits.shape
+
+    # Apply a temperature to the logits to control the randomness of the sampling
+    logits = logits / temperature
+
+    # Use Nucleus Sampling to select the next token
+    # Source: https://arxiv.org/pdf/1904.09751
+
+    # Compute the probabilities from the logits
+    probabilities = F.softmax(logits, dim=-1)
+
+    # Sort the probabilities and their indices, to find the cumulative probabilities later
+    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True, dim=-1)
+
+    # Compute the cumulative probabilities to find the nucleus limit
+    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
+
+    # Find the indices of the tokens that are below the nucleus probability threshold
+    mask = cumulative_probs <= nucleus_p
+    # Shift the mask to include the last token that exceeds the threshold
+    mask = torch.cat([
+        torch.zeros_like(mask[:, :1]),  # Keep the first token always
+        mask[:, :-1],
+    ], dim=1)
+
+    # Zero out the probabilities of the tokens that are not in the nucleus
+    sorted_probs[mask] = 0.0
+
+    # Rescale the new probabilities
+    nucleus_p_sum = sorted_probs.sum(dim=-1, keepdim=True)
+    new_probs = sorted_probs / nucleus_p_sum
+
+    # Restore the original indices of the tokens
+    probabilities.scatter_(1, sorted_indices, new_probs)
+
+    # Finally, we can sample the next token from the probabilities
+    next_tokens = torch.multinomial(probabilities, num_samples=1).squeeze(1)
+    assert next_tokens.shape == (batch_size,), \
+        f'next_tokens shape mismatch: {next_tokens.shape} != ({batch_size},)'
+
+    x_input_ids[:, 0] = next_tokens
     return x_input_ids, x_attention_mask
 
 
@@ -310,14 +428,12 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
         # Iteratively replace the first token, in an autoregressive manner
         while suffix_input_ids.size(-1) < t:
-            suffix_input_ids, suffix_attention_mask = backward_infer_prefix(
+            suffix_input_ids, suffix_attention_mask = backward_infer_prefix_nucleus_sampling(
                 lightning_module,
                 use_init,
                 reverse_bigram,
                 suffix_input_ids,
                 suffix_attention_mask,
-                suffix_tokens_len,
-                beam_size,
             )
         # Since the sentences are sorted, take the first one, which is the best one
         suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
@@ -365,13 +481,13 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:1',
+    run_evaluation(device='cuda:0',
                    k_samples=30,  # How many samples to take from the dataset
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=20,
                    prefix_len=20,  # How many tokens to predict
-                   use_init='bigram',
-                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
+                   use_init='pad',
+                   ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
                    cfg=cfg)
 
 
