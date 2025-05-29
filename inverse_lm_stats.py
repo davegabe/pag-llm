@@ -100,7 +100,7 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
     return lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts
 
 
-def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
+def run_evaluation(device: str, prefix_len: int | list, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
     lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
         device=device,
@@ -119,12 +119,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 
-        for k in range(prefix_len - 1, -1, -1):
+        for k in range(prefix_len - 1, -1, -1) if isinstance(prefix_len, int) else prefix_len:
             # Do a forward pass,
             # letting the model see only the tokens after k-th.
             # The model must predict token k-th
             # To do that, we need to mask the k-th token with [PAD]
             original_k_token = input_ids[:, k].clone()
+
+            # assert torch.all(attention_mask[:, k] == 1), \
+            #     f'Attention mask at position {k} is not 1 for all samples in the batch. ' \
 
             # Replace the k-th token with [PAD]
             # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
@@ -194,10 +197,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:2',
-                   prefix_len=5,
-                   use_init='random',
-                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
+    run_evaluation(device='cuda:0',
+                   prefix_len=list(reversed([0, 1, 2, 19, 24, 29])),
+                   use_init='pad',
+                   ckpt_file='tinystories_inv_first_norm__9ecoqzxt.ckpt',
                    cfg=cfg)
 
 
