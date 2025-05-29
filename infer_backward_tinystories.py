@@ -1,7 +1,7 @@
 import torch
-import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
+import nucleus_sampling
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import BatchType
 from inverse_lm_stats import init_evaluation
@@ -203,6 +203,7 @@ def backward_infer_prefix_nucleus_sampling(lightning_module: BaseLMModel,
         suffix_input_ids (torch.Tensor): The input IDs of the suffix.
         suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
         nucleus_p (float): The probability threshold for Nucleus Sampling.
+        temperature (float): The temperature to control the randomness of the sampling.
 
     Returns:
         torch.Tensor: The updated input IDs with the predicted token at the first position.
@@ -219,45 +220,8 @@ def backward_infer_prefix_nucleus_sampling(lightning_module: BaseLMModel,
         suffix_attention_mask=suffix_attention_mask,
         beam_size=1,
     )
-    batch_size, vocab_size = logits.shape
 
-    # Apply a temperature to the logits to control the randomness of the sampling
-    logits = logits / temperature
-
-    # Use Nucleus Sampling to select the next token
-    # Source: https://arxiv.org/pdf/1904.09751
-
-    # Compute the probabilities from the logits
-    probabilities = F.softmax(logits, dim=-1)
-
-    # Sort the probabilities and their indices, to find the cumulative probabilities later
-    sorted_probs, sorted_indices = torch.sort(probabilities, descending=True, dim=-1)
-
-    # Compute the cumulative probabilities to find the nucleus limit
-    cumulative_probs = torch.cumsum(sorted_probs, dim=-1)
-
-    # Find the indices of the tokens that are below the nucleus probability threshold
-    mask = cumulative_probs <= nucleus_p
-    # Shift the mask to include the last token that exceeds the threshold
-    mask = torch.cat([
-        torch.zeros_like(mask[:, :1]),  # Keep the first token always
-        mask[:, :-1],
-    ], dim=1)
-
-    # Zero out the probabilities of the tokens that are not in the nucleus
-    sorted_probs[mask] = 0.0
-
-    # Rescale the new probabilities
-    nucleus_p_sum = sorted_probs.sum(dim=-1, keepdim=True)
-    new_probs = sorted_probs / nucleus_p_sum
-
-    # Restore the original indices of the tokens
-    probabilities.scatter_(1, sorted_indices, new_probs)
-
-    # Finally, we can sample the next token from the probabilities
-    next_tokens = torch.multinomial(probabilities, num_samples=1).squeeze(1)
-    assert next_tokens.shape == (batch_size,), \
-        f'next_tokens shape mismatch: {next_tokens.shape} != ({batch_size},)'
+    next_tokens = nucleus_sampling.nucleus_sample(logits, nucleus_p, temperature)
 
     x_input_ids[:, 0] = next_tokens
     return x_input_ids, x_attention_mask
@@ -434,6 +398,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 reverse_bigram,
                 suffix_input_ids,
                 suffix_attention_mask,
+                nucleus_p=0.8,
+                temperature=0.8,
             )
         # Since the sentences are sorted, take the first one, which is the best one
         suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
@@ -486,8 +452,8 @@ def main(cfg: CustomLLMPagConfig):
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=20,
                    prefix_len=20,  # How many tokens to predict
-                   use_init='pad',
-                   ckpt_file='tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
+                   use_init='bigram',  # How to initialize the first token
+                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
                    cfg=cfg)
 
 
