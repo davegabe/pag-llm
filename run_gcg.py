@@ -207,6 +207,21 @@ def main(cfg: CustomLLMPagConfig):
         run_full_gcg_evaluation(gcg, lightning_model, data_module.val_dataset, gcg_output_file)
     analyze_gcg_results(lightning_model, gcg_output_file)
 
+    # with gcg_output_file.open('r') as f:
+    #     gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
+    # for result in gcg_results:
+    #     success_rate = sum(1 for target_token, attack_token in zip(result.target_response_ids, result.y_attack_response_ids) if target_token == attack_token) / len(result.target_response_ids)
+    #     original_prefix = lightning_model.tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True)
+    #     attack_prefix = lightning_model.tokenizer.decode(result.x_attack_ids, skip_special_tokens=True)
+    #     target_response = lightning_model.tokenizer.decode(result.target_response_ids, skip_special_tokens=True)
+    #     attack_response = lightning_model.tokenizer.decode(result.y_attack_response_ids, skip_special_tokens=True)
+    #     print(f"Original Prefix:    {original_prefix}")
+    #     print(f"Attack Prefix:      {attack_prefix}")
+    #     print(f"Target Response:    {target_response}")
+    #     print(f"Attack Response:    {attack_response}")
+    #     print(f"Success Rate:       {success_rate:.2%}")
+    #     print()
+
 
 if __name__ == '__main__':
     main()
