@@ -1,21 +1,27 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel
 
 
-def forward_grad_embeddings(model: PreTrainedModel, grad_x_embed: torch.Tensor) -> torch.Tensor:
+def forward_grad_embeddings(model: PreTrainedModel, grad_x_embed: torch.Tensor,
+                            layer_norm: nn.Module | None = None) -> torch.Tensor:
     """
     Project the gradients of the embeddings to the vocabulary space using the head of the model.
 
     Args:
         model (PreTrainedModel): The pre-trained model to fine-tune.
         grad_x_embed (torch.Tensor): The gradients of the embeddings. [batch_size, seq_len, embed_dim]
+        layer_norm (nn.Module | None): Optional layer normalization to apply to the gradients before projection.
+                                        If not provided, the model LM Head forward normalization will be used.
 
     Returns:
         logits (torch.Tensor): The logits of the model. [batch_size, seq_len, vocab_size]
     """
     # Apply the model normalization to the gradients
-    grad_x_embed = model.model.norm(grad_x_embed)  # [batch_size, embed_dim]
+    if layer_norm is None:
+        layer_norm = model.model.norm
+    grad_x_embed = layer_norm(grad_x_embed)  # [batch_size, embed_dim]
 
     # Create copy of lm_head weights to avoid affecting existing gradients
     lm_head_weight = model.lm_head.weight.clone().detach()
