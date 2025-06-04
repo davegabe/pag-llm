@@ -392,14 +392,16 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
         # Iteratively replace the first token, in an autoregressive manner
         while suffix_input_ids.size(-1) < t:
-            suffix_input_ids, suffix_attention_mask = backward_infer_prefix_nucleus_sampling(
+            suffix_input_ids, suffix_attention_mask = backward_infer_prefix_beam_search(
                 lightning_module,
                 use_init,
                 reverse_bigram,
                 suffix_input_ids,
                 suffix_attention_mask,
-                nucleus_p=0.8,
-                temperature=0.8,
+                # nucleus_p=0.8,
+                # temperature=0.8,
+                suffix_length=suffix_tokens_len,
+                beam_size=beam_size,
             )
         # Since the sentences are sorted, take the first one, which is the best one
         suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
@@ -452,7 +454,7 @@ def main(cfg: CustomLLMPagConfig):
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=20,
                    prefix_len=20,  # How many tokens to predict
-                   use_init='bigram',  # How to initialize the first token
+                   use_init='pad',  # How to initialize the first token
                    ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
                    cfg=cfg)
 
