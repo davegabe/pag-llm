@@ -192,7 +192,7 @@ def main(cfg: CustomLLMPagConfig):
     # Run GCG
     gcg: GCGAlgorithm = StandardGCG(
         num_iterations=10_000,
-        batch_size=128,
+        batch_size=2048,
         adversarial_tokens_length=15,
         top_k_substitutions_length=64,
         vocab_size=lightning_model.tokenizer.vocab_size,
