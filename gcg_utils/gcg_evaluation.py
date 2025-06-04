@@ -8,7 +8,7 @@ import transformers
 from tqdm import tqdm
 
 from data.data_processor import TextDataset
-from gcg import FasterGCG
+from gcg import GCGAlgorithm
 from models.base_model import BaseLMModel
 
 
@@ -76,7 +76,7 @@ class GCGResult:
         )
 
 
-def evaluate_model_with_gcg(gcg: FasterGCG,
+def evaluate_model_with_gcg(gcg: GCGAlgorithm,
                             lightning_module: BaseLMModel,
                             dataset: TextDataset,
                             target_response_len: int,

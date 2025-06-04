@@ -6,13 +6,13 @@ import torch.nn.functional as F
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import TextDataset
-from gcg import FasterGCG
+from gcg import GCGAlgorithm, StandardGCG, FasterGCG
 from gcg_utils import gcg_evaluation
 from instantiate import load_model_from_checkpoint
 from models.base_model import BaseLMModel
 
 
-def run_gcg_single_attack(gcg: FasterGCG, model: BaseLMModel, target_response: str):
+def run_gcg_single_attack(gcg: GCGAlgorithm, model: BaseLMModel, target_response: str):
     _, _, x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(model.tokenizer, model.model,
                                                                         None, target_response,
                                                                         show_progress=True)
@@ -22,7 +22,7 @@ def run_gcg_single_attack(gcg: FasterGCG, model: BaseLMModel, target_response: s
     print(f"Steps: {steps}")
 
 
-def run_full_gcg_evaluation(gcg: FasterGCG, model: BaseLMModel, dataset: TextDataset, gcg_output_file: pathlib.Path):
+def run_full_gcg_evaluation(gcg: GCGAlgorithm, model: BaseLMModel, dataset: TextDataset, gcg_output_file: pathlib.Path):
     print('Attacking:', model.model_name, 'on', model.device)
     gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, model, dataset,
                                                          target_response_len=10,
@@ -190,17 +190,19 @@ def main(cfg: CustomLLMPagConfig):
     lightning_model.to(torch_device).eval()
 
     # Run GCG
-    gcg = FasterGCG(
+    gcg: GCGAlgorithm = StandardGCG(
         num_iterations=10_000,
-        batch_size=900,
+        batch_size=128,
         adversarial_tokens_length=15,
         top_k_substitutions_length=64,
         vocab_size=lightning_model.tokenizer.vocab_size,
-        lambda_reg_embeddings_distance=0.1,
+        # lambda_reg_embeddings_distance=0.1,
     )
+    print(f'Running {gcg.__class__.__name__} attack on {model_name} model')
     # run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
 
-    gcg_output_file = cfg.model.output_dir / f'faster_gcg_{model_name}.json'
+    gcg_output_file_prefix = 'faster_gcg' if isinstance(gcg, FasterGCG) else 'gcg'
+    gcg_output_file = cfg.model.output_dir / f'{gcg_output_file_prefix}_{model_name}.json'
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
