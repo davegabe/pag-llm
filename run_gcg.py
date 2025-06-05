@@ -178,6 +178,7 @@ def main(cfg: CustomLLMPagConfig):
         'inv-first': 'tinystories_inv_first_norm__9ecoqzxt.ckpt',
         'identity-grad': 'tinystories_identity_grad_norm__qp6q1mop.ckpt',
         'negative-identity-grad': 'tinystories_negative_identity__qgcyfuq5.ckpt',
+        'multi-inv-first': 'tinystories_multi_inv_first__rs764m6d.ckpt',
     }[cfg.training.method]
     lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
         cfg.model.output_dir / ckpt_file,
