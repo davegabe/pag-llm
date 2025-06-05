@@ -6,7 +6,7 @@ import torch.nn.functional as F
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import TextDataset
-from gcg import GCGAlgorithm, StandardGCG, FasterGCG
+from gcg import GCGAlgorithm, FasterGCG
 from gcg_utils import gcg_evaluation
 from instantiate import load_model_from_checkpoint
 from models.base_model import BaseLMModel
@@ -191,13 +191,13 @@ def main(cfg: CustomLLMPagConfig):
     lightning_model.to(torch_device).eval()
 
     # Run GCG
-    gcg: GCGAlgorithm = StandardGCG(
+    gcg: GCGAlgorithm = FasterGCG(
         num_iterations=10_000,
-        batch_size=2048,
+        batch_size=900,
         adversarial_tokens_length=15,
         top_k_substitutions_length=64,
         vocab_size=lightning_model.tokenizer.vocab_size,
-        # lambda_reg_embeddings_distance=0.1,
+        lambda_reg_embeddings_distance=0.1,
     )
     print(f'Running {gcg.__class__.__name__} attack on {model_name} model')
     # run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
