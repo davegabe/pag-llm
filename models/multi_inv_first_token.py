@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 # noinspection PyPep8Naming
 import torch.nn.functional as F
 from transformers import PreTrainedModel, PreTrainedTokenizerFast
@@ -24,7 +23,7 @@ class MultiInvFirstTokenModel(BaseLMModel):
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
         self.split_sentence_parts = 4  # Number of parts to split the sentence into
         self.k_samples = 5
-        self.backward_norm = nn.LayerNorm(config.model.hidden_size)
+        # self.backward_norm = nn.LayerNorm(config.model.hidden_size)
 
     def _compute_losses(self, batch: BatchType) -> tuple:
         """
@@ -111,7 +110,7 @@ class MultiInvFirstTokenModel(BaseLMModel):
                 grad_x_embed = torch.autograd.grad(split_loss_ce, [inputs_embeds_split], create_graph=create_graph)[0]
 
                 # Forward pass to get the logits and probabilities
-                logits = forward_grad_embeddings(self.model, grad_x_embed[:, 0, :], layer_norm=self.backward_norm)
+                logits = forward_grad_embeddings(self.model, grad_x_embed[:, 0, :])
 
                 # We want that gradients on the first token will reconstruct the original token
                 loss_grads = F.cross_entropy(
