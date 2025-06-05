@@ -10,6 +10,7 @@ from lightning.pytorch.loggers import WandbLogger
 
 from config import CustomLLMPagConfig, LLMPagConfig, apply_config
 from instantiate import instantiate_model_by_config
+from utils.reset_optimizers_warmup_callback import ResetOptimizersWarmupCallback
 
 # Load environment variables
 load_dotenv()
@@ -68,13 +69,15 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         config= dataclasses.asdict(cfg),
     )
 
+    warmup_scheduler = ResetOptimizersWarmupCallback()
+
     # Create trainer
     trainer = pl.Trainer(
         max_epochs=cfg.training.num_epochs,
         accelerator="auto",
         devices=cfg.training.device if cfg.training.device else "auto",
         logger=wandb_logger,
-        callbacks=[checkpoint_callback, lr_monitor],
+        callbacks=[checkpoint_callback, lr_monitor, warmup_scheduler],
         log_every_n_steps=cfg.logging.logging_steps,
         val_check_interval=cfg.logging.evaluation_steps,
         accumulate_grad_batches=cfg.training.gradient_accumulation_steps,
