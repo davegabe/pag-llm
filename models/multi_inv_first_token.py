@@ -66,46 +66,46 @@ class MultiInvFirstTokenModel(BaseLMModel):
         forward_loss_ce = forward_outputs.loss
 
         ## BACKWARD MODE
-        # Split the sentence into multiple parts
-        # Choose K indexes to split the sentence into parts
-        all_indices = torch.ones(batch.input_ids.size(-1), device=input_ids.device, dtype=torch.float32)
-        split_indexes = torch.multinomial(all_indices, self.split_sentence_parts, replacement=False).sort()[0].long()
+        # Calculate gradient-based loss if we're past the warmup period
+        if self.current_epoch >= self.warmup_pretrain_epochs:
+            # Split the sentence into multiple parts
+            # Choose K indexes to split the sentence into parts
+            all_indices = torch.ones(batch.input_ids.size(-1), device=input_ids.device, dtype=torch.float32)
+            split_indexes = torch.multinomial(all_indices, self.split_sentence_parts, replacement=False).sort()[
+                0].long()
 
-        x_embed = self.model.get_input_embeddings()(input_ids)
-        pad_embed = self.model.get_input_embeddings()(
-            torch.tensor(self.tokenizer.pad_token_id, device=input_ids.device)
-        )
-
-        all_loss_grads = []
-        all_backward_logits = []
-        all_backward_labels = []
-
-        for split_i in split_indexes:
-            # Take from split_i to the end of the sentence
-            inputs_embeds_split = x_embed[:, split_i:, :].contiguous().clone()
-            shift_labels_split = shift_labels[:, split_i:].contiguous()
-            attention_mask_split = attention_mask[:, split_i:].contiguous()
-
-            # Mask the first token in input token embeddings
-            inputs_embeds_split[:, 0] = pad_embed
-
-            inputs_embeds_split = inputs_embeds_split.contiguous().detach()
-            inputs_embeds_split.requires_grad_(create_graph)
-
-            # Forward pass
-            outputs: CausalLMOutputWithPast = self.model(
-                inputs_embeds=inputs_embeds_split,
-                attention_mask=attention_mask_split,
-                labels='dummy',
-                shift_labels=shift_labels_split,
-                output_hidden_states=False
+            x_embed = self.model.get_input_embeddings()(input_ids)
+            pad_embed = self.model.get_input_embeddings()(
+                torch.tensor(self.tokenizer.pad_token_id, device=input_ids.device)
             )
-            split_loss_ce = outputs.loss
 
-            inv_first_label = shift_labels_split[:, 0].clone()
+            all_loss_grads = []
+            all_backward_logits = []
+            all_backward_labels = []
 
-            # Calculate gradient-based loss if we're past the warmup period
-            if self.current_epoch >= self.warmup_pretrain_epochs:
+            for split_i in split_indexes:
+                # Take from split_i to the end of the sentence
+                inputs_embeds_split = x_embed[:, split_i:, :].contiguous().clone()
+                shift_labels_split = shift_labels[:, split_i:].contiguous()
+                attention_mask_split = attention_mask[:, split_i:].contiguous()
+
+                # Mask the first token in input token embeddings
+                inputs_embeds_split[:, 0] = pad_embed
+
+                inputs_embeds_split = inputs_embeds_split.contiguous().detach()
+                inputs_embeds_split.requires_grad_(create_graph)
+
+                # Forward pass
+                outputs: CausalLMOutputWithPast = self.model(
+                    inputs_embeds=inputs_embeds_split,
+                    attention_mask=attention_mask_split,
+                    labels='dummy',
+                    shift_labels=shift_labels_split,
+                    output_hidden_states=False
+                )
+                split_loss_ce = outputs.loss
+
+                inv_first_label = shift_labels_split[:, 0].clone()
                 # Get the gradients on the first token
                 grad_x_embed = torch.autograd.grad(split_loss_ce, [inputs_embeds_split], create_graph=create_graph)[0]
 
@@ -122,9 +122,15 @@ class MultiInvFirstTokenModel(BaseLMModel):
                 all_backward_logits.append(logits)
                 all_backward_labels.append(inv_first_label)
 
-        loss_grads = torch.stack(all_loss_grads).mean() if all_loss_grads else torch.zeros_like(forward_loss_ce)
-        inv_logits = torch.stack(all_backward_logits) if all_backward_logits else None
-        inv_labels = torch.stack(all_backward_labels) if all_backward_labels else None
+            loss_grads = torch.stack(all_loss_grads).mean() if all_loss_grads else torch.zeros_like(forward_loss_ce)
+            inv_logits = torch.stack(all_backward_logits) if all_backward_logits else None
+            inv_labels = torch.stack(all_backward_labels) if all_backward_labels else None
+
+        else:
+            # If we are in the warmup period, we do not compute the backward loss
+            loss_grads = torch.zeros_like(forward_loss_ce)
+            inv_logits = None
+            inv_labels = None
 
         return forward_loss_ce, loss_grads, inv_logits, inv_labels
 

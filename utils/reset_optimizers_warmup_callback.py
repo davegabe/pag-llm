@@ -13,5 +13,5 @@ class ResetOptimizersWarmupCallback(pl.Callback):
         Reset optimizers and schedulers at the start of the first epoch after the warmup period.
         """
         if trainer.current_epoch == pl_module.config.training.warmup_pretrain_epochs:
-            print("Resetting optimizers and schedulers after warmup period.")
+            print("\n\nResetting optimizers and schedulers after warmup period.\n")
             trainer.strategy.setup_optimizers(trainer)
