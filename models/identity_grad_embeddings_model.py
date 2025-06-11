@@ -186,7 +186,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Get optimizer
         optimizer = self.optimizers()
         optimizer.zero_grad()
-        print(f"LR: {optimizer.param_groups[0]['lr']}")
         
         # Compute losses using common function
         loss_ce, loss_grads, _, top_k_accuracies = self._compute_losses(
