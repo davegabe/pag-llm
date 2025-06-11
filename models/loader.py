@@ -106,12 +106,11 @@ def create_model_and_tokenizer(
                 "</s>",
                 "<pad>",
                 "<mask>",
-                "<|endoftext|>" # Since TinyStoriesV2_cleaned dataset has this token
             ],
         )
 
         # Load the dataset
-        dataset = load_dataset(dataset_cfg.name, split="train")
+        dataset = load_dataset(dataset_cfg.name, dataset_cfg.config, split="train")
         def get_training_corpus():
             for i in range(0, len(dataset), 1000):
                 yield dataset[i : i + 1000]["text"]
