@@ -35,8 +35,9 @@ model:
 
 dataset:
   _target_: config.DatasetConfig
-  name: 'Salesforce/wikitext'
-  config: 'wikitext-103-raw-v1'
+  name: 'DaveGabe/wikitext103-overlapping-bpe'
+  config: null
+  tokenizer_name: 'DaveGabe/wikitext103-overlapping-bpe-tokenizer'
 
   train_split: 'train'
   eval_split: 'test' # 'validation' is not available in the dataset

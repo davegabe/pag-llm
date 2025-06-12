@@ -141,13 +141,98 @@ class TextDataset(Dataset):
                          shift_labels=encodings['shift_labels'])
 
 
+class PreTokenizedDataset(Dataset):
+    def __init__(
+        self,
+        dataset: Dataset,
+        max_length: int = 512,
+        input_ids_column: str = 'input_ids'
+    ):
+        """
+        Dataset class for pre-tokenized data.
+
+        Args:
+            dataset (Dataset): The dataset containing pre-tokenized input_ids.
+            max_length (int): The maximum length of the input text.
+            input_ids_column (str): The column name of the input_ids data.
+        """
+        self.dataset = dataset
+        self.max_length = max_length
+        self.input_ids_column = input_ids_column
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int) -> BatchType:
+        is_batch = False
+        if isinstance(idx, int):
+            idx = [idx]
+        elif isinstance(idx, torch.Tensor) and idx.ndim == 0:
+            idx = [idx.item()]
+        else:
+            is_batch = True
+
+        batch_type = self.__getitems__(idx)
+        if is_batch:
+            return batch_type
+        else:
+            return batch_type[0]
+
+    def __iter__(self) -> Generator[BatchType, None, None]:
+        for i in range(len(self)):
+            yield self.__getitem__(i)
+
+    def __getitems__(self, indices: list[int] | torch.Tensor) -> BatchType:
+        items = self.dataset[indices]
+        input_ids_list = items[self.input_ids_column]
+        
+        # Convert to tensor and handle padding/truncation
+        batch_input_ids = []
+        batch_attention_masks = []
+        
+        for input_ids in input_ids_list:
+            if isinstance(input_ids, list):
+                input_ids = torch.tensor(input_ids, dtype=torch.long)
+            
+            # Truncate if necessary
+            if len(input_ids) > self.max_length:
+                input_ids = input_ids[:self.max_length]
+            
+            # Create attention mask (1 for real tokens, 0 for padding)
+            attention_mask = torch.ones(len(input_ids), dtype=torch.long)
+            
+            # Pad if necessary
+            if len(input_ids) < self.max_length:
+                padding_length = self.max_length - len(input_ids)
+                # Pad on the left
+                input_ids = torch.cat([torch.zeros(padding_length, dtype=torch.long), input_ids])
+                attention_mask = torch.cat([torch.zeros(padding_length, dtype=torch.long), attention_mask])
+            
+            batch_input_ids.append(input_ids)
+            batch_attention_masks.append(attention_mask)
+        
+        # Stack into batch tensors
+        input_ids = torch.stack(batch_input_ids)
+        attention_mask = torch.stack(batch_attention_masks)
+        
+        # For causal LM, labels are the same as input_ids, shifted by 1
+        labels = input_ids.clone()
+        shift_labels = input_ids.roll(-1, dims=1)
+        shift_labels[:, -1] = 0
+
+        return BatchType(input_ids=input_ids,
+                         attention_mask=attention_mask,
+                         labels=labels,
+                         shift_labels=shift_labels)
+
+
 def load_and_process_dataset(
         dataset_config: DatasetConfig,
         tokenizer: PreTrainedTokenizerFast,
         max_length: int,
         overfit: bool = False,
         text_column: str = 'text'
-) -> tuple[TextDataset, TextDataset]:
+) -> tuple[TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset]:
     """
     Load and process dataset for training.
 
@@ -159,8 +244,8 @@ def load_and_process_dataset(
         text_column (str): The column name of the text data.
 
     Returns:
-        TextDataset: The training dataset.
-        TextDataset: The evaluation dataset.
+        TextDataset | PreTokenizedDataset: The training dataset.
+        TextDataset | PreTokenizedDataset: The evaluation dataset.
     """
     # Load the dataset
     raw_dataset = load_dataset(
@@ -168,6 +253,15 @@ def load_and_process_dataset(
         name=dataset_config.config,
         data_files=dataset_config.data_files,
     )
+
+    # Check if the dataset is pre-tokenized (has 'input_ids' column)
+    sample_data = raw_dataset[dataset_config.train_split][0]
+    is_pretokenized = 'input_ids' in sample_data and text_column not in sample_data
+    
+    if is_pretokenized:
+        print("Detected pre-tokenized dataset")
+    else:
+        print("Detected text dataset, will tokenize on-the-fly")
 
     # Check if overfitting is enabled (for debugging purposes)
     if overfit:
@@ -190,23 +284,34 @@ def load_and_process_dataset(
         raw_dataset[dataset_config.train_split] = Subset(full_samples, range(train_samples))
         raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, len(full_samples)))
 
-
     # Create training dataset
-    train_dataset = TextDataset(
-        raw_dataset[dataset_config.train_split],
-        tokenizer,
-        max_length,
-        text_column
-    )
+    if is_pretokenized:
+        train_dataset = PreTokenizedDataset(
+            raw_dataset[dataset_config.train_split],
+            max_length
+        )
+    else:
+        train_dataset = TextDataset(
+            raw_dataset[dataset_config.train_split],
+            tokenizer,
+            max_length,
+            text_column
+        )
     train_size = len(train_dataset)
 
     # Create evaluation dataset
-    eval_dataset = TextDataset(
-        raw_dataset[dataset_config.eval_split],
-        tokenizer,
-        max_length,
-        text_column
-    )
+    if is_pretokenized:
+        eval_dataset = PreTokenizedDataset(
+            raw_dataset[dataset_config.eval_split],
+            max_length
+        )
+    else:
+        eval_dataset = TextDataset(
+            raw_dataset[dataset_config.eval_split],
+            tokenizer,
+            max_length,
+            text_column
+        )
     
     # Limit evaluation dataset to 10% of training dataset size
     target_eval_size = int(train_size * 0.1)

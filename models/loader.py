@@ -78,9 +78,41 @@ def load_tokenizer(model_path_or_name: pathlib.Path | str) -> PreTrainedTokenize
 
     return tokenizer
 
+
+def load_tokenizer_with_config(dataset_config: DatasetConfig, model_path_or_name: pathlib.Path | str = None) -> PreTrainedTokenizerFast:
+    """
+    Load tokenizer based on dataset configuration or model path.
+    
+    Args:
+        dataset_config (DatasetConfig): Dataset configuration that may contain tokenizer_name
+        model_path_or_name (pathlib.Path | str, optional): Fallback model path for tokenizer loading
+        
+    Returns:
+        PreTrainedTokenizerFast: The loaded tokenizer
+    """
+    if dataset_config.tokenizer_name:
+        # Load external tokenizer
+        tokenizer: PreTrainedTokenizerFast = AutoTokenizer.from_pretrained(
+            dataset_config.tokenizer_name,
+            padding_side='left',
+        )
+        
+        # Check if tokenizer has padding token, if not set it
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+            
+        return tokenizer
+    elif model_path_or_name:
+        # Fallback to model-based tokenizer loading
+        return load_tokenizer(model_path_or_name)
+    else:
+        raise ValueError("Either dataset_config.tokenizer_name or model_path_or_name must be provided")
+
+
 def create_model_and_tokenizer(
         dataset_cfg: DatasetConfig,
         model_cfg: CustomModelConfig,
+        fast_tokenizer: PreTrainedTokenizerFast | None = None
 ) -> tuple[PreTrainedModel | nn.Module, PreTrainedTokenizerFast]:
     """
     Create a model and tokenizer with the specified parameters.
@@ -93,45 +125,46 @@ def create_model_and_tokenizer(
         tuple: A tuple containing the model and tokenizer.
     """
     # Check if the tokenizer already exists
-    if not os.path.exists(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"):
-        # Create a tokenizer and train it
-        print(f"Tokenizer not found at {model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json - creating it")
-        tokenizer = Tokenizer(BPE(unk_token="<unk>"))
-        trainer = BpeTrainer(
-            vocab_size=model_cfg.vocab_size,
-            min_frequency=2,
-            special_tokens=[
-                "<unk>",
-                "<s>",
-                "</s>",
-                "<pad>",
-                "<mask>",
-            ],
+    if fast_tokenizer is None:
+        if not os.path.exists(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"):
+            # Create a tokenizer and train it
+            print(f"Tokenizer not found at {model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json - creating it")
+            tokenizer = Tokenizer(BPE(unk_token="<unk>"))
+            trainer = BpeTrainer(
+                vocab_size=model_cfg.vocab_size,
+                min_frequency=2,
+                special_tokens=[
+                    "<unk>",
+                    "<s>",
+                    "</s>",
+                    "<pad>",
+                    "<mask>",
+                ],
+            )
+
+            # Load the dataset
+            dataset = load_dataset(dataset_cfg.name, dataset_cfg.config, split="train")
+            def get_training_corpus():
+                for i in range(0, len(dataset), 1000):
+                    yield dataset[i : i + 1000]["text"]
+            training_corpus = get_training_corpus()
+
+            # Train the tokenizer
+            tokenizer.pre_tokenizer = Whitespace()
+            tokenizer.train_from_iterator(
+                training_corpus,
+                trainer=trainer
+            )
+
+            # Save the tokenizer
+            tokenizer.save(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json")
+
+        # Load the tokenizer with the trained vocabulary
+        fast_tokenizer = PreTrainedTokenizerFast(
+            tokenizer_file=f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"
         )
-
-        # Load the dataset
-        dataset = load_dataset(dataset_cfg.name, dataset_cfg.config, split="train")
-        def get_training_corpus():
-            for i in range(0, len(dataset), 1000):
-                yield dataset[i : i + 1000]["text"]
-        training_corpus = get_training_corpus()
-
-        # Train the tokenizer
-        tokenizer.pre_tokenizer = Whitespace()
-        tokenizer.train_from_iterator(
-            training_corpus,
-            trainer=trainer
-        )
-
-        # Save the tokenizer
-        tokenizer.save(f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json")
-
-    # Load the tokenizer with the trained vocabulary
-    fast_tokenizer = PreTrainedTokenizerFast(
-        tokenizer_file=f"{model_cfg.output_dir}/tokenizer-{model_cfg.vocab_size}.json"
-    )
-    fast_tokenizer.pad_token = "<pad>"
-    fast_tokenizer.eos_token = "</s>"
+        fast_tokenizer.pad_token = "<pad>"
+        fast_tokenizer.eos_token = "</s>"
 
     # Build a model
     config = LlamaConfig(

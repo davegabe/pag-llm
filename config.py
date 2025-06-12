@@ -82,6 +82,7 @@ class DatasetConfig:
     config: str | None = None
     files_to_download: list[str] | None = None
     data_files: dict[str, list[str] | str] | None = None
+    tokenizer_name: str | None = None  # Optional external tokenizer
 
     def __post_init__(self):
         if self.files_to_download is not None and isinstance(self.files_to_download, ListConfig):

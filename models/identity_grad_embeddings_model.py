@@ -33,7 +33,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Remove redundant tokens, if any (depending on the tokenizer)
         self.mask_values = list(set(self.mask_values))
         # Remove None values
-        self.mask_values.remove(None)
+        if None in self.mask_values:
+            self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
 
         # Use default normalization layer

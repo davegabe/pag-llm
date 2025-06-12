@@ -22,19 +22,17 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
         tuple: A tuple containing the instantiated model, data module, and model name.
     """
     # Load tokenizer and model
-    if isinstance(cfg, CustomLLMPagConfig):
-        model, tokenizer = loader.create_model_and_tokenizer(
-            cfg.dataset,
-            cfg.model
-        )
-        model_name = None  # Use the model_name parameter in BaseLMModel
-    else:
-        model, tokenizer = loader.load_model_and_tokenizer(
-            cfg.model.pretrained_base,
-            cfg.model.random_initialization,
-            cfg.training.lora
-        )
+    if cfg.dataset.tokenizer_name:
+        tokenizer = loader.load_tokenizer_with_config(cfg.dataset)
+    model, _ = loader.create_model_and_tokenizer(
+        cfg.dataset,
+        cfg.model,
+        tokenizer
+    )
+    if hasattr(cfg.model, 'pretrained_base') and cfg.model.pretrained_base:
         model_name = cfg.model.pretrained_base.split("/")[-1]
+    else:
+        model_name = None
 
     model.train()
 
