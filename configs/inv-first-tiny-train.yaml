@@ -7,11 +7,11 @@ training:
   gradient_accumulation_steps: 1
   warmup_pretrain_epochs: 0
   overfit: False
-  num_epochs: 1000
+  num_epochs: 50
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256
-  method: 'identity-grad'
+  method: 'base'
   pag_classes: 256
   lora:
     _target_: config.LoraTConfig
