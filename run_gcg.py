@@ -2,25 +2,29 @@ import json
 import pathlib
 
 import torch
+import torch.nn.functional as F
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import TextDataset
-from gcg import gcg_algorithm, gcg_evaluation
+from gcg import GCGAlgorithm, FasterGCG
+from gcg_utils import gcg_evaluation
 from instantiate import load_model_from_checkpoint
+from models.base_model import BaseLMModel
 
 
-def run_gcg_single_attack(gcg: gcg_algorithm.GCG, target_response: str):
-    x_attack_str, y_attack_response, _ = gcg.run(target_response,
-                                                 evaluate_every_n_steps=50,
-                                                 stop_after_same_loss_steps=10)
+def run_gcg_single_attack(gcg: GCGAlgorithm, model: BaseLMModel, target_response: str):
+    _, _, x_attack_str, y_response_str, steps = gcg.tokenize_and_attack(model.tokenizer, model.model,
+                                                                        None, target_response,
+                                                                        show_progress=True)
     print(f"Attack string: {x_attack_str}")
-    print(f"Attack response: {y_attack_response}")
+    print(f"Attack response: {y_response_str}")
     print(f"Desired response: {target_response}")
+    print(f"Steps: {steps}")
 
 
-def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_output_file: pathlib.Path):
-    print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
-    gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
+def run_full_gcg_evaluation(gcg: GCGAlgorithm, model: BaseLMModel, dataset: TextDataset, gcg_output_file: pathlib.Path):
+    print('Attacking:', model.model_name, 'on', model.device)
+    gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, model, dataset,
                                                          target_response_len=10,
                                                          max_samples_to_attack=1_000,
                                                          random_select_samples=False)
@@ -29,23 +33,131 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     print(f"Saved GCG results to {gcg_output_file}")
 
 
-def analyze_gcg_results(gcg_output_file: pathlib.Path):
-    with gcg_output_file.open('r') as f:
-        gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
-
+def compute_success_rate(gcg_results: list[gcg_evaluation.GCGResult]) -> float:
     # Count the number of successfully attacked tokens
     num_successful_tokens = sum(
-        1
+        result.get_success_tokens()
         for result in gcg_results
-        for target_token, attack_response_token in zip(result.target_response_ids, result.y_attack_response_ids)
-        if target_token == attack_response_token
     )
     num_total_tokens = sum(
         min(len(result.target_response_ids), len(result.y_attack_response_ids))
         for result in gcg_results
     )
     token_attack_success_rate = num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0
+
+    return token_attack_success_rate
+
+
+def compute_mean_steps_to_success(gcg_results: list[gcg_evaluation.GCGResult]) -> tuple[float, float]:
+    # Count the average required steps to converge
+    # Ignore attacks with less than 2 successful tokens
+    successful_steps = [
+        result.steps
+        for result in gcg_results
+    ]
+    mean_success_steps = sum(successful_steps) / len(successful_steps) if successful_steps else 0
+    stddev_success_steps = (sum((x - mean_success_steps) ** 2 for x in successful_steps) / len(
+        successful_steps)) ** 0.5 if successful_steps else 0
+
+    return mean_success_steps, stddev_success_steps
+
+
+def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning_model: BaseLMModel,
+                          batch_size: int = 128) -> tuple:
+    # Compute the KL-divergence and CE-loss of the target suffix, given both the attack and the original prefix
+    tokenizer, llm = lightning_model.tokenizer, lightning_model.model
+    overall_original_loss, overall_attack_loss, overall_kl_div = [], [], []
+    for start_i in range(0, len(gcg_results), batch_size):
+        end_i = min(start_i + batch_size, len(gcg_results))
+        batch = gcg_results[start_i:end_i]
+
+        original_prefix_ids = torch.tensor([result.original_prefix_ids for result in batch], device=llm.device)
+        target_response_ids = torch.tensor([result.target_response_ids for result in batch], device=llm.device)
+        y_attack_response_ids = torch.tensor([result.y_attack_response_ids for result in batch], device=llm.device)
+        x_attack_ids = torch.tensor([result.x_attack_ids for result in batch], device=llm.device)
+
+        prefix_len = original_prefix_ids.size(1)
+        batch_size, suffix_len = y_attack_response_ids.shape
+        vocab_size = tokenizer.vocab_size
+
+        @torch.no_grad()
+        def _compute_y_logits(x: torch.Tensor) -> torch.Tensor:
+            """
+            Compute the logits that correspond to the prediction of the target suffix,
+            given a prefix which may be the original prefix or the attack prefix.
+
+            Args:
+                x: The prefix tokens to be used for the forward pass.
+
+            Returns:
+                The logits for the target suffix, already flattened.
+            """
+            nonlocal llm, target_response_ids, prefix_len
+            # Compute the forward pass with the given prefix
+            llm_tokens = torch.cat([x, target_response_ids], dim=1)
+            logits = llm(llm_tokens, return_dict=True).logits
+
+            # Extract only the logits that should predict the target response
+            return logits[:, prefix_len - 1:-1, :]
+
+        def _compute_logits_ce_loss(logits: torch.Tensor) -> torch.Tensor:
+            nonlocal target_response_ids, vocab_size, batch_size, suffix_len
+            # Compute the cross-entropy loss for the every sample in the batch
+            return F.cross_entropy(
+                logits.reshape(-1, vocab_size),
+                target_response_ids.view(-1),
+                reduction='none',
+            ).view(batch_size, suffix_len).mean(dim=-1)
+
+        with torch.no_grad():
+            # Compute the forward pass for the original and attack prefixes
+            original_logits = _compute_y_logits(original_prefix_ids)
+            attack_logits = _compute_y_logits(x_attack_ids)
+
+            # Compute the CE-loss for both
+            overall_original_loss.append(_compute_logits_ce_loss(original_logits))
+            overall_attack_loss.append(_compute_logits_ce_loss(attack_logits))
+
+            # Compute the KL-divergence between the two
+            kl_div = F.kl_div(
+                attack_logits.reshape(-1, vocab_size).log_softmax(dim=-1),
+                original_logits.reshape(-1, vocab_size).log_softmax(dim=-1),
+                reduction='none',
+                log_target=True,
+            ).sum(dim=-1).view(batch_size, suffix_len).mean(dim=-1)
+            overall_kl_div.append(kl_div)
+
+    # Compute the mean of the losses
+    original_loss = torch.cat(overall_original_loss)
+    original_loss_mean, original_loss_stddev = original_loss.mean(), original_loss.std()
+
+    attack_loss = torch.cat(overall_attack_loss)
+    attack_loss_mean, attack_loss_stddev = attack_loss.mean(), attack_loss.std()
+
+    kl_div = torch.cat(overall_kl_div)
+    kl_div_mean, kl_div_stddev = kl_div.mean(), kl_div.std()
+
+    return original_loss_mean, original_loss_stddev, attack_loss_mean, attack_loss_stddev, kl_div_mean, kl_div_stddev
+
+
+def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.Path, batch_size: int = 128):
+    with gcg_output_file.open('r') as f:
+        gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
+
+    token_attack_success_rate = compute_success_rate(gcg_results)
     print(f'Token attack success rate: {token_attack_success_rate:.2%}')
+
+    successful_gcg_results = [result for result in gcg_results if result.get_success_tokens() > 1]
+
+    mean_success_steps, stddev_success_steps = compute_mean_steps_to_success(successful_gcg_results)
+    print(f'Mean steps to success: {mean_success_steps:.0f} ± {stddev_success_steps:.0f}')
+
+    # Compute the attack losses
+    original_loss_mean, original_loss_stddev, attack_loss_mean, attack_loss_stddev, kl_div_mean, \
+        kl_div_stddev = compute_attack_losses(successful_gcg_results, lightning_model, batch_size=batch_size)
+    print(f'Mean original X CE-loss: {original_loss_mean:.2f} ± {original_loss_stddev:.2f}')
+    print(f'Mean attack X CE-loss: {attack_loss_mean:.2f} ± {attack_loss_stddev:.2f}')
+    print(f'Mean KL-divergence between original and attack Xs: {kl_div_mean:.2f} ± {kl_div_stddev:.2f}')
 
 
 @apply_config('inv-first-tiny-train')
@@ -65,31 +177,53 @@ def main(cfg: CustomLLMPagConfig):
         'bert-like': 'tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
         'inv-first': 'tinystories_inv_first_norm__9ecoqzxt.ckpt',
         'identity-grad': 'tinystories_identity_grad_norm__qp6q1mop.ckpt',
+        'negative-identity-grad': 'tinystories_negative_identity__qgcyfuq5.ckpt',
+        'multi-inv-first': 'tinystories_multi_inv_first__rs764m6d.ckpt',
     }[cfg.training.method]
     lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
         cfg.model.output_dir / ckpt_file,
         cfg,
     )
 
-    torch_device = 'cuda'
+    torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if cfg.training.device is not None:
         torch_device = f'cuda:{cfg.training.device[0]}'
-    lightning_model.to(torch_device)
+    lightning_model.to(torch_device).eval()
 
     # Run GCG
-    gcg = gcg_algorithm.GCG(
-        model=lightning_model.model,
-        tokenizer=lightning_model.tokenizer,
-        num_prefix_tokens=15,
-        num_steps=10_000,
-        search_width=1000,
-        top_k=64,
+    gcg: GCGAlgorithm = FasterGCG(
+        num_iterations=10_000,
+        batch_size=900,
+        adversarial_tokens_length=15,
+        top_k_substitutions_length=64,
+        vocab_size=lightning_model.tokenizer.vocab_size,
+        lambda_reg_embeddings_distance=0.1,
     )
-    # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
+    print(f'Running {gcg.__class__.__name__} attack on {model_name} model')
+    # run_gcg_single_attack(gcg, lightning_model, ' and it was a sunny day.')
 
-    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
-    run_full_gcg_evaluation(gcg, data_module.val_dataset, gcg_output_file)
-    analyze_gcg_results(gcg_output_file)
+    gcg_output_file_prefix = 'faster_gcg' if isinstance(gcg, FasterGCG) else 'gcg'
+    gcg_output_file = cfg.model.output_dir / f'{gcg_output_file_prefix}_{model_name}.json'
+    if gcg_output_file.exists():
+        print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
+    else:
+        run_full_gcg_evaluation(gcg, lightning_model, data_module.val_dataset, gcg_output_file)
+    analyze_gcg_results(lightning_model, gcg_output_file)
+
+    # with gcg_output_file.open('r') as f:
+    #     gcg_results = [gcg_evaluation.GCGResult.from_dict(r) for r in json.load(f)]
+    # for result in gcg_results:
+    #     success_rate = sum(1 for target_token, attack_token in zip(result.target_response_ids, result.y_attack_response_ids) if target_token == attack_token) / len(result.target_response_ids)
+    #     original_prefix = lightning_model.tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True)
+    #     attack_prefix = lightning_model.tokenizer.decode(result.x_attack_ids, skip_special_tokens=True)
+    #     target_response = lightning_model.tokenizer.decode(result.target_response_ids, skip_special_tokens=True)
+    #     attack_response = lightning_model.tokenizer.decode(result.y_attack_response_ids, skip_special_tokens=True)
+    #     print(f"Original Prefix:    {original_prefix}")
+    #     print(f"Attack Prefix:      {attack_prefix}")
+    #     print(f"Target Response:    {target_response}")
+    #     print(f"Attack Response:    {attack_response}")
+    #     print(f"Success Rate:       {success_rate:.2%}")
+    #     print()
 
 
 if __name__ == '__main__':

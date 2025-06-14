@@ -17,11 +17,14 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             model: PreTrainedModel,
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
+            grad_logits_sign: int = 1,
+            model_name: str = 'identity',
     ):
-        super().__init__('identity', model, tokenizer, config)
+        super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
+        self.grad_logits_sign = grad_logits_sign
         self.k_samples = 3
         self.mask_values = [
             tokenizer.mask_token_id,
@@ -129,6 +132,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 
             # Log the log_info dictionary
             self.log_dict(log_info, sync_dist=True)
+
+            # Apply the sign to the logits
+            logits = logits * self.grad_logits_sign
 
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(

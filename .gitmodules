@@ -1,0 +1,3 @@
+[submodule "faster-gcg"]
+	path = faster-gcg
+	url = git@github.com:simonesestito/faster-gcg.git

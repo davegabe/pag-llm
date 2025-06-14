@@ -10,6 +10,7 @@ from lightning.pytorch.loggers import WandbLogger
 
 from config import CustomLLMPagConfig, LLMPagConfig, apply_config
 from instantiate import instantiate_model_by_config
+from utils.reset_optimizers_warmup_callback import ResetOptimizersWarmupCallback
 
 # Load environment variables
 load_dotenv()
@@ -67,6 +68,8 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
         tags=tags,
         config= dataclasses.asdict(cfg),
     )
+
+    warmup_scheduler = ResetOptimizersWarmupCallback()
 
     # Create trainer
     trainer = pl.Trainer(
