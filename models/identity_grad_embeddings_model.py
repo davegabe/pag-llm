@@ -108,7 +108,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
             
             # Normalize the gradients based on the norm of the gradient
-            grad_x_embed = grad_x_embed / grad_x_embed.norm(dim=-1, keepdim=True)
+            grad_x_embed = grad_x_embed / (grad_x_embed.norm(dim=-1, keepdim=True) + 1e-8)
 
             # Dictionary to store gradient information for logging
             log_info = {}
@@ -184,8 +184,220 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         return self._step(batch, 'train')
 
     def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        # Ensure gradients can be computed if needed, but don't track for main model parameters here
+        # mode=False allows requires_grad=True on intermediate tensors to work for autograd.
         with torch.inference_mode(mode=False):
-            return self._step(batch, 'val')
+            # 1. Perform default validation
+            original_val_loss = self._step(batch, 'val') # Logs 'val/...' metrics
+
+            # --- Start of Randomized X validation ---
+            # This part needs gradients for intermediate computations.
+
+            # Clone data from batch to avoid in-place modifications
+            input_ids_cloned = batch.input_ids.clone()
+            attention_mask_cloned = batch.attention_mask.clone()
+            shift_labels_cloned = batch.shift_labels.clone() # These are the targets for the CE loss
+
+            # Original tokens at valid positions (these will be our target for the PAG head)
+            original_valid_tokens = input_ids_cloned[attention_mask_cloned == 1]
+
+            if original_valid_tokens.numel() == 0:
+                # print(f"Skipping randomized X validation for batch {batch_idx} due to no valid tokens.")
+                return original_val_loss
+
+            # Create randomized input embeddings
+            vocab_size = self.model.config.vocab_size
+            random_token_ids = torch.randint(
+                0, vocab_size, input_ids_cloned.shape, device=input_ids_cloned.device
+            )
+            # Detach random_token_ids to ensure they don't carry unexpected grad history
+            random_x_embed = self.model.get_input_embeddings()(random_token_ids.detach())
+            random_x_embed.requires_grad_(True)
+
+            # Forward pass with randomized embeddings to get CE loss
+            # This CE loss is for predicting `shift_labels_cloned` from `random_x_embed`
+            outputs_random: CausalLMOutputWithPast = self.model(
+                inputs_embeds=random_x_embed,
+                attention_mask=attention_mask_cloned,
+                labels='dummy', # Model should use shift_labels internally
+                shift_labels=shift_labels_cloned,
+                output_hidden_states=False
+            )
+            loss_ce_random = outputs_random.loss
+            
+            if loss_ce_random is None:
+                # print(f"Warning: loss_ce_random is None in randomized X validation for batch {batch_idx}. Skipping.")
+                return original_val_loss
+
+            # Get gradients of this CE loss w.r.t. the randomized embeddings
+            try:
+                grad_wrt_random_x_embed_tuple = torch.autograd.grad(
+                    outputs=loss_ce_random,
+                    inputs=[random_x_embed],
+                    create_graph=False, # No second-order gradients needed for validation
+                    allow_unused=False 
+                )
+                grad_wrt_random_x_embed = grad_wrt_random_x_embed_tuple[0]
+            except RuntimeError as e:
+                # print(f"RuntimeError during grad computation in randomized X validation for batch {batch_idx}: {e}. Skipping.")
+                return original_val_loss
+
+            if grad_wrt_random_x_embed is None:
+                # print(f"Warning: grad_wrt_random_x_embed is None in randomized X validation for batch {batch_idx}. Skipping.")
+                return original_val_loss
+
+            # Filter gradients and the random embeddings to valid token positions
+            grad_filtered = grad_wrt_random_x_embed[attention_mask_cloned == 1]
+            random_embed_filtered = random_x_embed[attention_mask_cloned == 1]
+
+            if grad_filtered.numel() == 0: # Should be caught by original_valid_tokens.numel() check earlier
+                return original_val_loss
+
+            # Normalize the gradients
+            norm_val = grad_filtered.norm(dim=-1, keepdim=True)
+            grad_normalized = grad_filtered / (norm_val + 1e-8) # Epsilon for stability
+
+            # Iterative refinement process
+            num_iterations = 100
+            current_token_ids = random_token_ids.clone()  # Start with random tokens
+            
+            # Track metrics across iterations
+            iteration_losses = []
+            iteration_accuracies = []
+            
+            for iteration in range(num_iterations):
+                # Get embeddings for current tokens
+                current_x_embed = self.model.get_input_embeddings()(current_token_ids.detach())
+                current_x_embed.requires_grad_(True)
+
+                # Forward pass with current embeddings to get CE loss
+                outputs_current: CausalLMOutputWithPast = self.model(
+                    inputs_embeds=current_x_embed,
+                    attention_mask=attention_mask_cloned,
+                    labels='dummy',
+                    shift_labels=shift_labels_cloned,
+                    output_hidden_states=False
+                )
+                loss_ce_current = outputs_current.loss
+                
+                if loss_ce_current is None:
+                    break  # Skip remaining iterations if loss computation fails
+
+                # Get gradients of this CE loss w.r.t. the current embeddings
+                try:
+                    grad_wrt_current_x_embed_tuple = torch.autograd.grad(
+                        outputs=loss_ce_current,
+                        inputs=[current_x_embed],
+                        create_graph=False,
+                        allow_unused=False 
+                    )
+                    grad_wrt_current_x_embed = grad_wrt_current_x_embed_tuple[0]
+                except RuntimeError as e:
+                    break  # Skip remaining iterations if gradient computation fails
+
+                if grad_wrt_current_x_embed is None:
+                    break
+
+                # Filter gradients and embeddings to valid token positions
+                grad_filtered = grad_wrt_current_x_embed[attention_mask_cloned == 1]
+                current_embed_filtered = current_x_embed[attention_mask_cloned == 1]
+
+                if grad_filtered.numel() == 0:
+                    break
+
+                # Normalize the gradients
+                norm_val = grad_filtered.norm(dim=-1, keepdim=True)
+                grad_normalized = grad_filtered / (norm_val + 1e-8)
+
+                # Input for the PAG head: normalized gradient + corresponding current embedding
+                pag_head_input = grad_normalized + current_embed_filtered
+                
+                log_info_iter = {}
+                
+                # Use PAG head to predict tokens
+                logits_pag_iter = forward_grad_embeddings(
+                    self.model,
+                    pag_head_input,
+                    norm=self.emb_norm,
+                    log_info=log_info_iter,
+                    tag=f'val_random_x_pag_iter_{iteration}'
+                )
+
+                # Apply sign to logits
+                logits_pag_iter = logits_pag_iter * self.grad_logits_sign
+
+                # Compute loss and accuracy for this iteration
+                loss_pag_iter = F.cross_entropy(
+                    input=logits_pag_iter,
+                    target=original_valid_tokens,
+                    reduction='mean'
+                )
+                
+                # Compute top-1 accuracy for this iteration
+                predicted_tokens = torch.argmax(logits_pag_iter, dim=-1)
+                accuracy_iter = (predicted_tokens == original_valid_tokens).float().mean()
+                
+                # Compute top-k accuracies for k=[1,2,3] for this iteration
+                top_k_accuracies_iter = compute_top_k_accuracies(
+                    original_valid_tokens,
+                    logits_pag_iter,
+                    3,  # Compute for k=1,2,3
+                    f'val_random_x_pag_iter_{iteration}'
+                )
+                
+                iteration_losses.append(loss_pag_iter.item())
+                iteration_accuracies.append(accuracy_iter.item())
+
+                # Get the most probable tokens from logits and update current_token_ids
+                predicted_token_ids_filtered = torch.argmax(logits_pag_iter, dim=-1)
+                
+                # Update the token IDs at valid positions with predicted tokens
+                current_token_ids_flat = current_token_ids.view(-1)
+                valid_positions = (attention_mask_cloned == 1).view(-1)
+                current_token_ids_flat[valid_positions] = predicted_token_ids_filtered
+                current_token_ids = current_token_ids_flat.view(current_token_ids.shape)
+
+                # Log iteration-specific metrics (optional, might be too verbose)
+                if iteration % 20 == 0 or iteration == num_iterations - 1:  # Log every 20 iteration + last
+                    self.log_dict({
+                        f'val_random_x_pag/iter_{iteration}_loss': loss_pag_iter,
+                        f'val_random_x_pag/iter_{iteration}_acc': accuracy_iter,
+                        **top_k_accuracies_iter  # Include top-k accuracies for this iteration
+                    }, prog_bar=False, sync_dist=True)
+
+            # Log final metrics and iteration statistics
+            if iteration_losses:
+                final_loss = iteration_losses[-1]
+                final_accuracy = iteration_accuracies[-1]
+                initial_loss = iteration_losses[0]
+                initial_accuracy = iteration_accuracies[0]
+                
+                # Compute improvement metrics
+                loss_improvement = initial_loss - final_loss
+                accuracy_improvement = final_accuracy - initial_accuracy
+                
+                # Compute final top-k accuracies using the last iteration's logits
+                final_accuracies = compute_top_k_accuracies(
+                    original_valid_tokens,
+                    logits_pag_iter,  # Last iteration's logits
+                    3,  # Compute for k=1,2,3
+                    'val_random_x_pag_final'
+                )
+
+                # Log comprehensive metrics
+                self.log_dict({
+                    f'val_random_x_pag/final_loss': final_loss,
+                    f'val_random_x_pag/final_accuracy': final_accuracy,
+                    f'val_random_x_pag/initial_loss': initial_loss,
+                    f'val_random_x_pag/initial_accuracy': initial_accuracy,
+                    f'val_random_x_pag/loss_improvement': loss_improvement,
+                    f'val_random_x_pag/accuracy_improvement': accuracy_improvement,
+                    f'val_random_x_pag/iterations_completed': len(iteration_losses),
+                    **final_accuracies
+                }, prog_bar=False, sync_dist=True)
+            # --- End of Randomized X validation ---
+
+        return original_val_loss # Return loss from the default validation part
 
     def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         """
