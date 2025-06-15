@@ -75,10 +75,36 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
         attention_mask = batch.attention_mask
 
-        # Get the embeddings of X
-        x_embed = self.model.get_input_embeddings()(input_ids)
-        if create_graph:
+        # With probability 0.2, create randomized embeddings (with random tokens)
+        if torch.rand(1).item() < 0.2 and tag == 'train':
+            # Create random token IDs
+            vocab_size = self.model.config.vocab_size
+            random_token_ids = torch.randint(
+                0, vocab_size, input_ids.shape, device=input_ids.device
+            )
+            # Get the embeddings for the random tokens
+            x_embed = self.model.get_input_embeddings()(random_token_ids)
             x_embed.requires_grad_(True)
+
+            randomized_embeddings = True
+        
+        # Otherwise we use the original embeddings
+        else:
+            # Get the embeddings of X
+            x_embed = self.model.get_input_embeddings()(input_ids)
+            if create_graph:
+                x_embed.requires_grad_(True)
+            
+            # Add random noise to the embeddings, use a small norm based on the strength of the embeddings
+            if tag == 'train':
+                strength = x_embed.norm(dim=-1, keepdim=True).mean() * 0.03
+                noise = torch.randn_like(x_embed) * strength
+                x_embed = x_embed + noise
+
+            randomized_embeddings = False
+
+        # Log whether we used randomized embeddings
+        self.log(f'{tag}/randomized_embeddings', randomized_embeddings, prog_bar=False, sync_dist=True)
 
         # Forward pass
         outputs: CausalLMOutputWithPast = self.model(
@@ -142,7 +168,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             top_k_accuracies = dict()
 
         # Combine losses using the lambda hyperparameters
-        loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
+        if randomized_embeddings:
+            # If we used randomized embeddings, we only consider the PAG loss
+            loss = self.lambda_loss_pag * loss_grads
+        else:
+            loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
         return loss_ce, loss_grads, loss, top_k_accuracies
 
