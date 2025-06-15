@@ -22,6 +22,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
+        self.lambda_loss_entropy = 1
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
         self.grad_logits_sign = grad_logits_sign
         self.k_samples = 3
@@ -75,8 +76,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
         attention_mask = batch.attention_mask
 
-        # With probability 0.2, create randomized embeddings (with random tokens)
-        if torch.rand(1).item() < 0.2 and tag == 'train':
+        # With probability P, create randomized embeddings (with random tokens)
+        if torch.rand(1).item() < 0.5 and tag == 'train':
             # Create random token IDs
             vocab_size = self.model.config.vocab_size
             random_token_ids = torch.randint(
@@ -87,18 +88,18 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             x_embed.requires_grad_(True)
 
             randomized_embeddings = True
-        
+
         # Otherwise we use the original embeddings
         else:
             # Get the embeddings of X
             x_embed = self.model.get_input_embeddings()(input_ids)
             if create_graph:
                 x_embed.requires_grad_(True)
-            
+
             # Add random noise to the embeddings, use a small norm based on the strength of the embeddings
             if tag == 'train':
-                strength = x_embed.norm(dim=-1, keepdim=True).mean() * 0.03
-                noise = torch.randn_like(x_embed) * strength
+                norms = x_embed.norm(dim=-1, keepdim=True)  # [batch, seq, 1]
+                noise = torch.randn_like(x_embed) * norms * 0.03  # Scale noise by 3% of the embedding norm
                 x_embed = x_embed + noise
 
             randomized_embeddings = False
@@ -132,7 +133,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             n_first, vocab_size, d = valid_tokens.size(0), self.model.config.vocab_size, x_embed.size(-1)
             assert grad_x_embed.shape == (n_first, d), \
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
-            
+
             # Normalize the gradients based on the norm of the gradient
             grad_x_embed = grad_x_embed / (grad_x_embed.norm(dim=-1, keepdim=True) + 1e-8)
 
@@ -146,7 +147,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 log_info=log_info,
                 tag=tag
             )
-                
+
             # Log the log_info dictionary
             self.log_dict(log_info, sync_dist=True)
 
@@ -167,11 +168,63 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             loss_grads = torch.zeros_like(loss_ce)
             top_k_accuracies = dict()
 
-        # Combine losses using the lambda hyperparameters
+        # Combine losses using lambda parameters
         if randomized_embeddings:
-            # If we used randomized embeddings, we only consider the PAG loss
-            loss = self.lambda_loss_pag * loss_grads
-        else:
+            # If we used randomized embeddings, we want to:
+            # 1. Maximize the entropy of the model's predictions (lower confidence).
+            # 2. Minimize the gradient-based PAG loss (loss_grads).
+
+            # loss_ce (outputs.loss) is CE(model(random_embed), original_shift_labels).
+            # It's used for calculating grad_x_embed for loss_grads.
+
+            # Calculate mean entropy of the model's output distribution
+            pred_logits = outputs.logits  # Logits corresponding to shift_labels
+            
+            probs = F.softmax(pred_logits, dim=-1)
+            log_probs = F.log_softmax(pred_logits, dim=-1)
+            entropy_full = -torch.sum(probs * log_probs, dim=-1) # Shape (batch, seq_len_for_logits)
+
+            pad_token_id = self.tokenizer.pad_token_id
+            current_shift_labels = batch.shift_labels
+
+            if pad_token_id is None:
+                 if hasattr(batch, 'shift_labels') and batch.shift_labels is not None:
+                    mask = torch.ones_like(batch.shift_labels, dtype=entropy_full.dtype, device=entropy_full.device)
+                 else: 
+                    mask = torch.ones_like(entropy_full, dtype=entropy_full.dtype, device=entropy_full.device)
+            else:
+                if not hasattr(batch, 'shift_labels') or batch.shift_labels is None:
+                    raise ValueError("batch.shift_labels is required for entropy masking when pad_token_id is present.")
+                
+                # Adjust shapes if there's a mismatch typical of Causal LMs (logits seq_len vs labels seq_len)
+                if entropy_full.shape[1] != current_shift_labels.shape[1]:
+                    if entropy_full.shape[1] == current_shift_labels.shape[1] - 1 and current_shift_labels.shape[1] > 1:
+                        current_shift_labels = current_shift_labels[:, :entropy_full.shape[1]]
+                    elif current_shift_labels.shape[1] == entropy_full.shape[1] - 1 and entropy_full.shape[1] > 1:
+                        entropy_full = entropy_full[:, :current_shift_labels.shape[1]]
+
+                mask = (current_shift_labels != pad_token_id).type_as(entropy_full)
+                if entropy_full.shape[1] != mask.shape[1]:
+                     pass 
+
+            masked_entropy_sum = torch.sum(entropy_full * mask)
+            num_active_elements = torch.sum(mask)
+            
+            if num_active_elements > 0:
+                mean_entropy = masked_entropy_sum / num_active_elements
+            else:
+                mean_entropy = torch.tensor(0.0, device=pred_logits.device, dtype=pred_logits.dtype)
+
+            log_vocab_size = torch.log(torch.tensor(self.model.config.vocab_size, dtype=mean_entropy.dtype, device=mean_entropy.device))
+            loss_entropy_objective = log_vocab_size - mean_entropy
+            
+            self.log(f'{tag}/mean_entropy_random', mean_entropy, prog_bar=False, sync_dist=True)
+            self.log(f'{tag}/loss_entropy_objective_random', loss_entropy_objective, prog_bar=False, sync_dist=True)
+            
+            loss = self.lambda_loss_entropy * loss_entropy_objective + self.lambda_loss_pag * loss_grads
+
+        else: # not randomized_embeddings
+            # If we used the original embeddings, we want to minimize both CE and PAG losses.
             loss = self.lambda_loss_ce * loss_ce + self.lambda_loss_pag * loss_grads
 
         return loss_ce, loss_grads, loss, top_k_accuracies
@@ -209,7 +262,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.model.zero_grad()
 
         return loss
-    
+
     def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._step(batch, 'train')
 
@@ -254,7 +307,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 output_hidden_states=False
             )
             loss_ce_random = outputs_random.loss
-            
+
             if loss_ce_random is None:
                 # print(f"Warning: loss_ce_random is None in randomized X validation for batch {batch_idx}. Skipping.")
                 return original_val_loss
@@ -265,7 +318,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                     outputs=loss_ce_random,
                     inputs=[random_x_embed],
                     create_graph=False, # No second-order gradients needed for validation
-                    allow_unused=False 
+                    allow_unused=False
                 )
                 grad_wrt_random_x_embed = grad_wrt_random_x_embed_tuple[0]
             except RuntimeError as e:
@@ -288,13 +341,13 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             grad_normalized = grad_filtered / (norm_val + 1e-8) # Epsilon for stability
 
             # Iterative refinement process
-            num_iterations = 100
+            num_iterations = 10
             current_token_ids = random_token_ids.clone()  # Start with random tokens
-            
+
             # Track metrics across iterations
             iteration_losses = []
             iteration_accuracies = []
-            
+
             for iteration in range(num_iterations):
                 # Get embeddings for current tokens
                 current_x_embed = self.model.get_input_embeddings()(current_token_ids.detach())
@@ -309,7 +362,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                     output_hidden_states=False
                 )
                 loss_ce_current = outputs_current.loss
-                
+
                 if loss_ce_current is None:
                     break  # Skip remaining iterations if loss computation fails
 
@@ -319,7 +372,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                         outputs=loss_ce_current,
                         inputs=[current_x_embed],
                         create_graph=False,
-                        allow_unused=False 
+                        allow_unused=False
                     )
                     grad_wrt_current_x_embed = grad_wrt_current_x_embed_tuple[0]
                 except RuntimeError as e:
@@ -341,9 +394,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
                 # Input for the PAG head: normalized gradient + corresponding current embedding
                 pag_head_input = grad_normalized + current_embed_filtered
-                
+
                 log_info_iter = {}
-                
+
                 # Use PAG head to predict tokens
                 logits_pag_iter = forward_grad_embeddings(
                     self.model,
@@ -362,11 +415,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                     target=original_valid_tokens,
                     reduction='mean'
                 )
-                
+
                 # Compute top-1 accuracy for this iteration
                 predicted_tokens = torch.argmax(logits_pag_iter, dim=-1)
                 accuracy_iter = (predicted_tokens == original_valid_tokens).float().mean()
-                
+
                 # Compute top-k accuracies for k=[1,2,3] for this iteration
                 top_k_accuracies_iter = compute_top_k_accuracies(
                     original_valid_tokens,
@@ -374,13 +427,13 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                     3,  # Compute for k=1,2,3
                     f'val_random_x_pag_iter_{iteration}'
                 )
-                
+
                 iteration_losses.append(loss_pag_iter.item())
                 iteration_accuracies.append(accuracy_iter.item())
 
                 # Get the most probable tokens from logits and update current_token_ids
                 predicted_token_ids_filtered = torch.argmax(logits_pag_iter, dim=-1)
-                
+
                 # Update the token IDs at valid positions with predicted tokens
                 current_token_ids_flat = current_token_ids.view(-1)
                 valid_positions = (attention_mask_cloned == 1).view(-1)
@@ -388,7 +441,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 current_token_ids = current_token_ids_flat.view(current_token_ids.shape)
 
                 # Log iteration-specific metrics (optional, might be too verbose)
-                if iteration % 20 == 0 or iteration == num_iterations - 1:  # Log every 20 iteration + last
+                if iteration % 2 == 0 or iteration == num_iterations - 1:  # Log every 2 iteration + last
                     self.log_dict({
                         f'val_random_x_pag/iter_{iteration}_loss': loss_pag_iter,
                         f'val_random_x_pag/iter_{iteration}_acc': accuracy_iter,
@@ -401,11 +454,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 final_accuracy = iteration_accuracies[-1]
                 initial_loss = iteration_losses[0]
                 initial_accuracy = iteration_accuracies[0]
-                
+
                 # Compute improvement metrics
                 loss_improvement = initial_loss - final_loss
                 accuracy_improvement = final_accuracy - initial_accuracy
-                
+
                 # Compute final top-k accuracies using the last iteration's logits
                 final_accuracies = compute_top_k_accuracies(
                     original_valid_tokens,
@@ -428,40 +481,3 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             # --- End of Randomized X validation ---
 
         return original_val_loss # Return loss from the default validation part
-
-    def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
-        """
-        Compute ability to for Inverse Language Modeling task using masked sequences.
-        Compute loss and accuracy on inverse K token task.
-
-        Args:
-            batch (BatchType): The batch of data.
-            batch_idx (int): The index of the batch.
-        """
-        for first_tokens_to_predict in range(self.first_tokens_to_predict):
-            for mask_value in self.mask_values:
-                # Define the metric prefix
-                exp_prefix = f'test/m_{mask_value}_t_{first_tokens_to_predict}'
-
-                # Mask the first tokens
-                input_ids = batch.input_ids.clone()
-                input_ids[:, :first_tokens_to_predict] = mask_value
-                batch.input_ids = input_ids
-
-                with torch.inference_mode(mode=False):
-                    # Compute losses using common function
-                    loss_ce, loss_grads, loss, top_k_accuracies = self._compute_losses(
-                        batch,
-                        first_tokens_to_predict,
-                        tag='test',
-                    )
-
-                    self.log_dict(top_k_accuracies, sync_dist=True, prog_bar=False)
-                    
-                    self.log_dict({
-                        f'{exp_prefix}/loss_inv': loss_grads,
-                    }, prog_bar=True, sync_dist=True)
-        
-        # Ensure that the model has no gradients
-        self.model.zero_grad()
-        return torch.tensor(0.0, device=self.device)
