@@ -25,6 +25,7 @@ def create_dataset(name: str, config: str, vocabulary_size: int, max_seq_length:
         overlap (float): Fraction of overlap between chunks, default is 0.25.
     """
     # Step 1: Load dataset
+    dataset_name = name.split("/")[-1]  # Get the dataset name from the full path
     dataset = load_dataset(name, config)
 
     # Step 2: Train BPE tokenizer
@@ -44,14 +45,14 @@ def create_dataset(name: str, config: str, vocabulary_size: int, max_seq_length:
     )
 
     # Save all text to a temporary file to train tokenizer
-    text_file = "wikitext_text.txt"
+    text_file =  "temp_text.txt"
     with open(text_file, "w", encoding="utf-8") as f:
         for item in dataset["train"]:
             f.write(item["text"] + "\n")
 
     tokenizer.train([text_file], trainer)
 
-    tokenizer_path = "tokenizer-wikitext103.json"
+    tokenizer_path = f"tokenizer-{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}.json"
     tokenizer.save(tokenizer_path)
 
     # Wrap in transformers-compatible tokenizer
@@ -90,8 +91,7 @@ def create_dataset(name: str, config: str, vocabulary_size: int, max_seq_length:
     print(f"Tokenized dataset: {tokenized_dataset}")
 
     # Step 4: Save and push to Hugging Face Hub
-
-    repo_name = user + "/wikitext103-overlapping-bpe"  # Replace with your actual HF username
+    repo_name = user + f"/{dataset_name}-bpe-{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}"
     tokenizer_dir = "./tokenizer"
     os.makedirs(tokenizer_dir, exist_ok=True)
     tok.save_pretrained(tokenizer_dir)
@@ -105,8 +105,8 @@ def create_dataset(name: str, config: str, vocabulary_size: int, max_seq_length:
 if __name__ == "__main__":
     # Example usage
     create_dataset(
-        name="wikitext",
-        config="wikitext-103-v1",
+        name="fhswf/TinyStoriesV2_cleaned",
+        config=None,
         vocabulary_size=2048,
         max_seq_length=512,
         overlap=0.25
