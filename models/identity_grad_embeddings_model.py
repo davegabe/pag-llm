@@ -100,7 +100,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
 
             # Forward pass to get the logits and probabilities
-            logits = forward_grad_embeddings(self.model, x_embed + grad_x_embed)
+            logits = forward_grad_embeddings(self.model, x_embed[batch.attention_mask == 1] + grad_x_embed)
             assert logits.shape == (n_first, vocab_size), \
                 f'Expected logits to be of shape (n\'={n_first}, {vocab_size=}), but got {logits.shape}'
 
