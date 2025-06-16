@@ -7,3 +7,4 @@ downloaded_dataset/
 .venv/
 wandb/
 *.SLURMout
+/faster-gcg/
