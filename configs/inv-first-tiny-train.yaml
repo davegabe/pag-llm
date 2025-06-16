@@ -5,10 +5,10 @@ training:
   learning_rate: 0.004
   batch_size: 16
   gradient_accumulation_steps: 1
-  warmup_pretrain_epochs: 0
+  warmup_pretrain_epochs: 40
   overfit: False
-  num_epochs: 100
-  warmup_steps: 100
+  num_epochs: 400
+  warmup_steps: 150
   weight_decay: 0.01
   max_seq_length: 256
   method: 'identity-grad'

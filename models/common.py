@@ -27,20 +27,20 @@ def forward_grad_embeddings(
     if norm is None:
         norm = model.model.norm
 
-    # Store the mean of the gradients before normalization
-    log_info[f"{tag}/before_norm_mean"] = grad_x_embed.mean().clone().detach()
+    # Store the norm of the gradients before normalization
+    log_info[f"{tag}/before_norm_mean"] = grad_x_embed.norm(dim=-1).mean()
         
     # Apply the model normalization to the gradients
     grad_x_embed = norm(grad_x_embed)  # [batch_size, embed_dim]
     
-    # Store the mean of the gradients after normalization
-    log_info[f"{tag}/after_norm_mean"] = grad_x_embed.mean().clone().detach()
+    # Store the norm of the gradients after normalization
+    log_info[f"{tag}/after_norm_mean"] = grad_x_embed.norm(dim=-1).mean()
 
     # Create copy of lm_head weights to avoid affecting existing gradients
-    lm_head_weight = model.lm_head.weight.clone().detach()
+    lm_head_weight = model.lm_head.weight#.clone().detach()
 
     if hasattr(model.lm_head, 'bias') and model.lm_head.bias is not None:
-        lm_head_bias = model.lm_head.bias.clone().detach()
+        lm_head_bias = model.lm_head.bias#.clone().detach()
     else:
         lm_head_bias = None
 

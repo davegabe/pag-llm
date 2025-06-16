@@ -77,12 +77,13 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         attention_mask = batch.attention_mask
 
         # With probability P, create randomized embeddings (with random tokens)
-        if torch.rand(1).item() < 0.5 and tag == 'train':
+        if torch.rand(1).item() < 2.0 and tag == 'train' and self.current_epoch >= self.warmup_pretrain_epochs:
             # Create random token IDs
             vocab_size = self.model.config.vocab_size
             random_token_ids = torch.randint(
                 0, vocab_size, input_ids.shape, device=input_ids.device
             )
+            # random_token_ids = torch.ones_like(input_ids) # DEBUG: Use ones to avoid random tokens, for debugging purposes
             # Get the embeddings for the random tokens
             x_embed = self.model.get_input_embeddings()(random_token_ids)
             x_embed.requires_grad_(True)
@@ -293,6 +294,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             random_token_ids = torch.randint(
                 0, vocab_size, input_ids_cloned.shape, device=input_ids_cloned.device
             )
+            # random_token_ids = torch.ones_like(input_ids_cloned)  # DEBUG: Use ones to avoid random tokens, for debugging purposes
             # Detach random_token_ids to ensure they don't carry unexpected grad history
             random_x_embed = self.model.get_input_embeddings()(random_token_ids.detach())
             random_x_embed.requires_grad_(True)
