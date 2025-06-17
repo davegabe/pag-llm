@@ -5,6 +5,7 @@ from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
 from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.processors import TemplateProcessing
 from transformers import PreTrainedTokenizerFast
 from huggingface_hub import login
 from huggingface_hub import create_repo, upload_folder, upload_file
@@ -39,6 +40,8 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
     """
     # Step 1: Load dataset
     dataset_id = hf_path.split("/")[-1]  # Get the dataset name from the full path
+    dataset_name = f"/{dataset_id}-voc{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}"
+    repo_name = user + dataset_name
     dataset = load_dataset(hf_path, config)
 
     # Step 2: Train BPE tokenizer using temporary file
@@ -76,11 +79,18 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
 
         tokenizer.train([text_file], trainer)
 
-        tokenizer_path = os.path.join(temp_dir, f"tokenizer-{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}.json")
-        tokenizer.save(tokenizer_path)
+        # Add special tokens to tokenizer
+        tokenizer.post_process = TemplateProcessing(
+            single="<s> $A </s>",
+            pair="<s> $A </s> <s> $B </s>",
+            special_tokens=[
+                ("<s>", tokenizer.token_to_id("<s>")),
+                ("</s>", tokenizer.token_to_id("</s>")),
+            ]
+        )
 
         # Wrap in transformers-compatible tokenizer
-        tok = PreTrainedTokenizerFast(tokenizer_file=tokenizer_path)
+        tok = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
         special_tokens_dict = {
             "pad_token": "<pad>",
             "unk_token": "<unk>",
@@ -154,39 +164,85 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
             text_chunks = []
             
             if add_special:
-                # Use tokenizer-managed special tokens with overlapping windows
-                # First, get raw tokens without special tokens to calculate overlaps properly
+                # Manually add BOS/EOS and handle padding
+
+                # Get raw tokens from the input text without any special tokens added by the tokenizer yet
                 raw_tokens = tokenizer(text, add_special_tokens=False, return_attention_mask=False)["input_ids"]
                 
-                # Calculate step size for overlap
-                # Since tokenizer will add BOS/EOS, we need to account for that in our window size
-                effective_content_length = block_size - 2  # Reserve space for BOS/EOS
-                step = max(1, effective_content_length - stride)
+                # target_content_length is the number of tokens from raw_tokens that we want to place
+                # between the BOS and EOS tokens.
+                # This must be (block_size - 2) if BOS and EOS are present.
+                target_content_length = block_size - 2
                 
-                for i in range(0, len(raw_tokens), step):
-                    # Extract chunk of raw tokens
-                    chunk_tokens = raw_tokens[i:i + effective_content_length]
-                    
-                    # Only keep chunks that meet minimum threshold
-                    if len(chunk_tokens) >= min_threshold:
-                        # Convert back to text for tokenizer processing
-                        chunk_text = tokenizer.decode(chunk_tokens, skip_special_tokens=True)
+                # min_content_len is the minimum number of actual content tokens (excluding BOS/EOS)
+                # required to form a valid chunk. This is based on the min_threshold passed to the function,
+                # which in the original code, compared against the length of the content part.
+                min_content_len = min_threshold # min_threshold is min_chunk_threshold
+
+                # stride is the overlap of the full block_size, as in the original logic.
+                # step determines how much the window for extracting content_tokens slides over raw_tokens.
+                # It's based on the target_content_length and the desired stride.
+                step = max(1, target_content_length - stride if target_content_length > stride else 1)
+
+                if target_content_length < 0:
+                    # This implies block_size < 2, which is too small to add both BOS and EOS.
+                    # In this scenario, we'll effectively skip adding special tokens for this text segment,
+                    # or one might consider falling back to the add_special=False logic.
+                    # For now, we'll log a warning and produce no chunks for this text if this occurs.
+                    # print(f"Warning: block_size {block_size} is too small to add BOS and EOS. Skipping for this text segment.")
+                    pass # No chunks will be generated from this 'text' if target_content_length < 0
+
+                else:
+                    for i in range(0, len(raw_tokens), step):
+                        # Extract the segment of raw_tokens that will form the content of our chunk
+                        current_content_ids = raw_tokens[i : i + target_content_length]
                         
-                        # Use tokenizer to add special tokens and pad to exact length
-                        tokenized = tokenizer(
-                            chunk_text,
-                            add_special_tokens=True,
-                            max_length=block_size,
-                            truncation=True,
-                            padding="max_length",
-                            return_attention_mask=False
-                        )
-                        
-                        chunks.append(tokenized["input_ids"])
-                        if include_text:
-                            # Decode with special tokens visible
-                            text_chunk = tokenizer.decode(tokenized["input_ids"], skip_special_tokens=False)
-                            text_chunks.append(text_chunk)
+                        # Check if the extracted content meets the minimum length requirement
+                        if len(current_content_ids) >= min_content_len:
+                            # Manually construct the chunk with BOS and EOS tokens
+                            final_chunk_ids = []
+                            if tokenizer.bos_token_id is not None:
+                                final_chunk_ids.append(tokenizer.bos_token_id)
+                            
+                            final_chunk_ids.extend(current_content_ids)
+                            
+                            if tokenizer.eos_token_id is not None:
+                                final_chunk_ids.append(tokenizer.eos_token_id)
+                            
+                            # Pad the chunk to the required block_size
+                            padding_needed = block_size - len(final_chunk_ids)
+                            
+                            if padding_needed >= 0:
+                                padded_chunk = final_chunk_ids + [tokenizer.pad_token_id] * padding_needed
+                            else:
+                                # This case (padding_needed < 0) should ideally not be hit if
+                                # len(current_content_ids) <= target_content_length and target_content_length = block_size - 2.
+                                # It implies len(final_chunk_ids) > block_size.
+                                # For robustness, truncate.
+                                padded_chunk = final_chunk_ids[:block_size]
+                                # Attempt to preserve BOS/EOS if they were overwritten by truncation
+                                if tokenizer.bos_token_id is not None and len(padded_chunk) > 0 and padded_chunk[0] != tokenizer.bos_token_id:
+                                    padded_chunk[0] = tokenizer.bos_token_id
+                                if tokenizer.eos_token_id is not None and len(padded_chunk) == block_size and padded_chunk[-1] != tokenizer.eos_token_id:
+                                    if block_size > 1: # Ensure there's space for EOS if BOS is also present
+                                        padded_chunk[-1] = tokenizer.eos_token_id
+                                    elif block_size == 1 and tokenizer.bos_token_id is None : # Only EOS if block_size is 1 and no BOS
+                                        padded_chunk[0] = tokenizer.eos_token_id
+
+
+                            # Ensure the final chunk is exactly block_size, as a final safety measure
+                            if len(padded_chunk) != block_size:
+                                if len(padded_chunk) > block_size:
+                                    padded_chunk = padded_chunk[:block_size]
+                                else: # len(padded_chunk) < block_size
+                                    padded_chunk.extend([tokenizer.pad_token_id] * (block_size - len(padded_chunk)))
+                            
+                            chunks.append(padded_chunk)
+
+                            if include_text:
+                                # Decode the manually constructed and padded chunk
+                                text_chunk = tokenizer.decode(padded_chunk, skip_special_tokens=False)
+                                text_chunks.append(text_chunk)
             else:
                 # Process without special tokens - use raw token sliding window
                 raw_tokens = tokenizer(text, add_special_tokens=False, return_attention_mask=False)["input_ids"]
@@ -220,7 +276,8 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         print(f"Tokenized dataset: {tokenized_dataset}")
 
         # Step 4: Save and push to Hugging Face Hub
-        repo_name = user + f"/{dataset_id}-bpe-{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}"
+        tokenized_dataset.save_to_disk(f".{dataset_name}")
+        print(f"Dataset saved to {dataset_name}")
         
         # Save tokenizer to temporary directory
         tokenizer_dir = os.path.join(temp_dir, "tokenizer")
@@ -228,21 +285,22 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         tok.save_pretrained(tokenizer_dir)
 
         # Create repositories
-        create_repo(repo_name + "-tokenizer", exist_ok=True)
-        create_repo(repo_name, exist_ok=True)
+        create_repo(repo_name + "-bpe-tokenizer", exist_ok=True)
         
         # Upload tokenizer
-        upload_folder(repo_id=repo_name + "-tokenizer", folder_path=tokenizer_dir)
+        upload_folder(repo_id=repo_name + "-bpe-tokenizer", folder_path=tokenizer_dir)
         
         # Upload complete text file to the main dataset repository  
-        complete_text_filename = f"{dataset_id}-complete-text.txt"
-        print(f"Uploading complete text file to {repo_name}")
-        upload_file(
-            path_or_fileobj=text_file,
-            path_in_repo=complete_text_filename,
-            repo_id=repo_name,
-            repo_type="dataset"
-        )
+        if include_text:
+            complete_text_filename = f"{dataset_id}-complete-text.txt"
+            print(f"Uploading complete text file to {repo_name}")
+            create_repo(repo_name, exist_ok=True)
+            upload_file(
+                path_or_fileobj=text_file,
+                path_in_repo=complete_text_filename,
+                repo_id=repo_name,
+                repo_type="dataset"
+            )
 
         # Push tokenized dataset
         print(f"Pushing tokenized dataset to {repo_name}")
@@ -250,8 +308,7 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         
         print(f"Dataset creation complete!")
         print(f"Tokenized dataset: {repo_name}")
-        print(f"Tokenizer: {repo_name}-tokenizer")
-        print(f"Complete text file uploaded as: {complete_text_filename}")
+        print(f"Tokenizer: {repo_name}-bpe-tokenizer")
 
 if __name__ == "__main__":
     create_dataset(
@@ -260,7 +317,7 @@ if __name__ == "__main__":
         vocabulary_size=2048,
         max_seq_length=256,
         overlap=0.25,
-        include_text=True,
+        include_text=False,
         endoftext_handling="keep",
         add_special_tokens=True  # Add BOS/EOS tokens to each chunk
     )
