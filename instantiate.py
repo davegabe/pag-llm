@@ -32,7 +32,8 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
         model, tokenizer = loader.load_model_and_tokenizer(
             cfg.model.pretrained_base,
             cfg.model.random_initialization,
-            cfg.training.lora
+            cfg.training.lora,
+            cfg.dataset.pretrained_tokenizer_name if cfg.dataset.use_pretokenized else None
         )
         model_name = cfg.model.pretrained_base.split("/")[-1]
 

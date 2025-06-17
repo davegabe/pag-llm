@@ -141,12 +141,96 @@ class TextDataset(Dataset):
                          shift_labels=encodings['shift_labels'])
 
 
+class PreTokenizedDataset(Dataset):
+    def __init__(
+        self,
+        dataset: Dataset,
+        tokenizer: PreTrainedTokenizerFast,
+        max_length: int = 512,
+        token_column: str = 'input_ids'
+    ):
+        """
+        Dataset class for pre-tokenized data.
+
+        Args:
+            dataset (Dataset): The pre-tokenized dataset to process.
+            tokenizer (PreTrainedTokenizerFast): The tokenizer for compatibility (mainly for pad_token_id).
+            max_length (int): The maximum length of the input sequences.
+            token_column (str): The column name of the tokenized data.
+        """
+        self.dataset = dataset
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+        self.token_column = token_column
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __getitem__(self, idx: int) -> BatchType:
+        # Handle batch vs single item similar to TextDataset
+        is_batch = False
+        if isinstance(idx, int):
+            idx = [idx]
+        elif isinstance(idx, torch.Tensor) and idx.ndim == 0:
+            idx = [idx.item()]
+        else:
+            is_batch = True
+
+        batch_type = self.__getitems__(idx)
+        if is_batch:
+            return batch_type
+        else:
+            return batch_type[0]
+
+    def __iter__(self) -> Generator[BatchType, None, None]:
+        for i in range(len(self)):
+            yield self.__getitem__(i)
+
+    def __getitems__(self, indices: list[int] | torch.Tensor) -> BatchType:
+        items = self.dataset[indices]
+        token_ids = items[self.token_column]
+        
+        # Convert to tensor if needed and ensure proper shape
+        if not isinstance(token_ids, torch.Tensor):
+            token_ids = torch.tensor(token_ids, dtype=torch.long)
+        
+        # If single sequence, add batch dimension
+        if token_ids.ndim == 1:
+            token_ids = token_ids.unsqueeze(0)
+        
+        # Truncate or pad sequences to max_length
+        batch_size, seq_len = token_ids.shape
+        if seq_len > self.max_length:
+            token_ids = token_ids[:, :self.max_length]
+        elif seq_len < self.max_length:
+            pad_length = self.max_length - seq_len
+            pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            padding = torch.full((batch_size, pad_length), pad_token_id, dtype=torch.long)
+            token_ids = torch.cat([padding, token_ids], dim=1)  # Left padding
+        
+        # Create attention mask (1 for real tokens, 0 for padding)
+        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        attention_mask = (token_ids != pad_token_id).long()
+        
+        # For causal LM, labels are the same as input_ids, shifted by 1
+        labels = token_ids.clone()
+        shift_labels = token_ids.roll(-1, dims=1)
+        shift_labels[:, -1] = 0  # Set last token to 0 (or could use pad_token_id)
+
+        return BatchType(
+            input_ids=token_ids,
+            attention_mask=attention_mask,
+            labels=labels,
+            shift_labels=shift_labels
+        )
+
+
 def load_and_process_dataset(
         dataset_config: DatasetConfig,
         tokenizer: PreTrainedTokenizerFast,
         max_length: int,
         text_column: str = 'text'
-) -> tuple[TextDataset, TextDataset]:
+) -> tuple[TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset]:
     """
     Load and process dataset for training.
 
@@ -157,50 +241,74 @@ def load_and_process_dataset(
         text_column (str): The column name of the text data.
 
     Returns:
-        TextDataset: The training dataset.
-        TextDataset: The evaluation dataset.
+        TextDataset | PreTokenizedDataset: The training dataset.
+        TextDataset | PreTokenizedDataset: The evaluation dataset.
     """
-    # Load the dataset
-    raw_dataset = load_dataset(
-        path=dataset_config.name,
-        name=dataset_config.config,
-        data_files=dataset_config.data_files,
-    )
+    # Check if we should use pre-tokenized dataset
+    if dataset_config.use_pretokenized and dataset_config.pretokenized_dataset_name:
+        print(f"Loading pre-tokenized dataset: {dataset_config.pretokenized_dataset_name}")
+        
+        # Load the pre-tokenized dataset
+        raw_dataset = load_dataset(dataset_config.pretokenized_dataset_name)
 
-    # Check if the dataset has the specified splits
-    if dataset_config.eval_split not in raw_dataset:
-        # Create custom splits
-        full_samples = raw_dataset[dataset_config.train_split]
-        train_samples = int(len(full_samples) * 0.8)
+        # Create training dataset
+        train_dataset = PreTokenizedDataset(
+            raw_dataset[dataset_config.train_split],
+            tokenizer,
+            max_length,
+        )
+        train_size = len(train_dataset)
+        
+        # Create evaluation dataset
+        eval_dataset = PreTokenizedDataset(
+            raw_dataset[dataset_config.eval_split],
+            tokenizer,
+            max_length,
+        )
+    else:
+        # Use regular text dataset processing
+        print(f"Loading text dataset: {dataset_config.name}")
+        
+        # Load the dataset
+        raw_dataset = load_dataset(
+            path=dataset_config.name,
+            name=dataset_config.config,
+            data_files=dataset_config.data_files,
+        )
 
-        # Create Subset
-        raw_dataset[dataset_config.train_split] = Subset(full_samples, range(train_samples))
-        raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, len(full_samples)))
+        # Check if the dataset has the specified splits
+        if dataset_config.eval_split not in raw_dataset:
+            # Create custom splits
+            full_samples = raw_dataset[dataset_config.train_split]
+            train_samples = int(len(full_samples) * 0.8)
 
+            # Create Subset
+            raw_dataset[dataset_config.train_split] = Subset(full_samples, range(train_samples))
+            raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, len(full_samples)))
 
-    # Create training dataset
-    train_dataset = TextDataset(
-        raw_dataset[dataset_config.train_split],
-        tokenizer,
-        max_length,
-        text_column
-    )
-    train_size = len(train_dataset)
+        # Create training dataset
+        train_dataset = TextDataset(
+            raw_dataset[dataset_config.train_split],
+            tokenizer,
+            max_length,
+            text_column
+        )
+        train_size = len(train_dataset)
 
-    # Create evaluation dataset
-    eval_dataset = TextDataset(
-        raw_dataset[dataset_config.eval_split],
-        tokenizer,
-        max_length,
-        text_column
-    )
-    
-    # Limit evaluation dataset to 10% of training dataset size
-    target_eval_size = int(train_size * 0.1)
-    if len(eval_dataset) > target_eval_size:
-        print(f"WARNING: Evaluation dataset size is larger than 10% of training dataset size. "
-              f"Limiting evaluation dataset to {target_eval_size} samples.")
-        eval_dataset = Subset(eval_dataset, range(target_eval_size))
+        # Create evaluation dataset
+        eval_dataset = TextDataset(
+            raw_dataset[dataset_config.eval_split],
+            tokenizer,
+            max_length,
+            text_column
+        )
+        
+        # Limit evaluation dataset to 10% of training dataset size
+        target_eval_size = int(train_size * 0.1)
+        if len(eval_dataset) > target_eval_size:
+            print(f"WARNING: Evaluation dataset size is larger than 10% of training dataset size. "
+                  f"Limiting evaluation dataset to {target_eval_size} samples.")
+            eval_dataset = Subset(eval_dataset, range(target_eval_size))
 
     # Log dataset sizes
     print(f'Train dataset size:\t{train_size}')

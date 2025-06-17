@@ -28,16 +28,21 @@ model:
   num_hidden_layers: 8
   num_key_value_heads: 4
   tie_word_embeddings: True
-  vocab_size: 2048
+  vocab_size: 2048 # This will be automatically updated to match the tokenizer
   max_position_embeddings: 256
-  output_dir: '${path:checkpoints/tinystories}'
+  output_dir: '${path:checkpoints/tinystories-pretokenized}'
 
 dataset:
   _target_: config.DatasetConfig
-  name: 'fhswf/TinyStoriesV2_cleaned'
+  name: 'fhswf/TinyStoriesV2_cleaned' # not used when use_pretokenized is True
+  
+  # Pre-tokenized dataset configuration
+  use_pretokenized: True
+  pretokenized_dataset_name: 'DaveGabe/TinyStoriesV2_cleaned-voc2048-seq256-overlap25'
+  pretrained_tokenizer_name: 'DaveGabe/TinyStoriesV2_cleaned-voc2048-seq256-overlap25-bpe-tokenizer'
 
   train_split: 'train'
-  eval_split: 'test' # 'validation' is not available in the dataset
+  eval_split: 'test'
   num_workers: 3
   prefix:
     _target_: config.DatasetPrefixConfig
