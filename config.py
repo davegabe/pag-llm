@@ -74,7 +74,7 @@ class DatasetPrefixConfig:
 class DatasetConfig:
     name: str
     train_split: str
-    eval_split: str
+    test_split: str
     prefix: DatasetPrefixConfig
     num_workers: int
 
@@ -87,7 +87,14 @@ class DatasetConfig:
     pretokenized_dataset_name: str | None = None
     pretrained_tokenizer_name: str | None = None
 
+    # Optional eval split
+    eval_split: str | None = None # defaults to test_split if not provided
+
     def __post_init__(self):
+        # Default test_split to eval_split if not provided
+        if self.test_split is None:
+            self.test_split = self.eval_split
+            
         if self.files_to_download is not None and isinstance(self.files_to_download, ListConfig):
             self.files_to_download = list(self.files_to_download)
 

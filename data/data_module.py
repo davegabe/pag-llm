@@ -15,6 +15,7 @@ class LMDataModule(pl.LightningDataModule):
         self.tokenizer = tokenizer
         self.train_dataset = None
         self.val_dataset = None
+        self.test_dataset = None
     
     def prepare_data(self):
         """Download data files if needed. This method is called only once on rank 0."""
@@ -27,7 +28,7 @@ class LMDataModule(pl.LightningDataModule):
     
     def setup(self, stage=None):
         """Load datasets"""
-        self.train_dataset, self.val_dataset = load_and_process_dataset(
+        self.train_dataset, self.val_dataset, self.test_dataset = load_and_process_dataset(
             self.config.dataset,
             self.tokenizer,
             self.config.training.max_seq_length
@@ -53,7 +54,7 @@ class LMDataModule(pl.LightningDataModule):
     
     def test_dataloader(self):
         return DataLoader(
-            dataset=self.val_dataset, # TODO: Use a separate test dataset if available
+            dataset=self.test_dataset,
             batch_size=self.config.training.batch_size,
             num_workers=self.config.dataset.num_workers,
             collate_fn=lambda x: x,

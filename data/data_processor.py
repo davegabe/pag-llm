@@ -230,7 +230,7 @@ def load_and_process_dataset(
         tokenizer: PreTrainedTokenizerFast,
         max_length: int,
         text_column: str = 'text'
-) -> tuple[TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset]:
+) -> tuple[TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset]:
     """
     Load and process dataset for training.
 
@@ -241,8 +241,10 @@ def load_and_process_dataset(
         text_column (str): The column name of the text data.
 
     Returns:
-        TextDataset | PreTokenizedDataset: The training dataset.
-        TextDataset | PreTokenizedDataset: The evaluation dataset.
+        tuple: (train_dataset, val_dataset, test_dataset)
+            train_dataset: The training dataset.
+            val_dataset: The validation dataset.
+            test_dataset: The test dataset.
     """
     # Check if we should use pre-tokenized dataset
     if dataset_config.use_pretokenized and dataset_config.pretokenized_dataset_name:
@@ -259,12 +261,22 @@ def load_and_process_dataset(
         )
         train_size = len(train_dataset)
         
-        # Create evaluation dataset
-        eval_dataset = PreTokenizedDataset(
+        # Create validation dataset
+        val_dataset = PreTokenizedDataset(
             raw_dataset[dataset_config.eval_split],
             tokenizer,
             max_length,
         )
+        
+        # Create test dataset - use test_split if different from eval_split, otherwise reuse val_dataset
+        if dataset_config.test_split != dataset_config.eval_split and dataset_config.test_split in raw_dataset:
+            test_dataset = PreTokenizedDataset(
+                raw_dataset[dataset_config.test_split],
+                tokenizer,
+                max_length,
+            )
+        else:
+            test_dataset = val_dataset
     else:
         # Use regular text dataset processing
         print(f"Loading text dataset: {dataset_config.name}")
@@ -280,11 +292,12 @@ def load_and_process_dataset(
         if dataset_config.eval_split not in raw_dataset:
             # Create custom splits
             full_samples = raw_dataset[dataset_config.train_split]
-            train_samples = int(len(full_samples) * 0.8)
+            train_samples = int(len(full_samples) * 0.9) # 90% for training
+            val_samples = int(len(full_samples) * 0.1) # 10% for validation + test
 
             # Create Subset
             raw_dataset[dataset_config.train_split] = Subset(full_samples, range(train_samples))
-            raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, len(full_samples)))
+            raw_dataset[dataset_config.eval_split] = Subset(full_samples, range(train_samples, val_samples))
 
         # Create training dataset
         train_dataset = TextDataset(
@@ -295,26 +308,31 @@ def load_and_process_dataset(
         )
         train_size = len(train_dataset)
 
-        # Create evaluation dataset
-        eval_dataset = TextDataset(
+        # Create validation dataset
+        val_dataset = TextDataset(
             raw_dataset[dataset_config.eval_split],
             tokenizer,
             max_length,
             text_column
         )
         
-        # Limit evaluation dataset to 10% of training dataset size
-        target_eval_size = int(train_size * 0.1)
-        if len(eval_dataset) > target_eval_size:
-            print(f"WARNING: Evaluation dataset size is larger than 10% of training dataset size. "
-                  f"Limiting evaluation dataset to {target_eval_size} samples.")
-            eval_dataset = Subset(eval_dataset, range(target_eval_size))
+        # Create test dataset - use test_split if different from eval_split, otherwise reuse val_dataset
+        if dataset_config.test_split != dataset_config.eval_split and dataset_config.test_split in raw_dataset:
+            test_dataset = TextDataset(
+                raw_dataset[dataset_config.test_split],
+                tokenizer,
+                max_length,
+                text_column
+            )
+        else:
+            test_dataset = val_dataset
 
     # Log dataset sizes
     print(f'Train dataset size:\t{train_size}')
-    print(f'Eval dataset size:\t{len(eval_dataset)}')
+    print(f'Validation dataset size:\t{len(val_dataset)}')
+    print(f'Test dataset size:\t{len(test_dataset)}')
 
-    return train_dataset, eval_dataset
+    return train_dataset, val_dataset, test_dataset
 
 
 def download_files(files_to_download: list[str], destination_dir: pathlib.Path, chunk_size=64*1024):

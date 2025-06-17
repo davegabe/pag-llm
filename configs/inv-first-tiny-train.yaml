@@ -42,7 +42,8 @@ dataset:
   pretrained_tokenizer_name: 'DaveGabe/TinyStoriesV2_cleaned-voc2048-seq256-overlap25-bpe-tokenizer'
 
   train_split: 'train'
-  eval_split: 'test'
+  eval_split: 'validation'
+  test_split: 'test'
   num_workers: 3
   prefix:
     _target_: config.DatasetPrefixConfig
