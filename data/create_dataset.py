@@ -1,6 +1,6 @@
 import os
 import tempfile
-from datasets import load_dataset, DatasetDict
+from datasets import load_dataset, DatasetDict, concatenate_datasets
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
@@ -18,7 +18,7 @@ if hf_token:
 else:
     login()  # Will prompt for your token
 
-def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_length: int, overlap: float = 0.25, include_text: bool = True, endoftext_handling: str = "keep", add_special_tokens: bool = True):
+def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_length: int, overlap: float = 0.25, include_text: bool = True, endoftext_handling: str = "keep", add_special_tokens: bool = True, train_split: float = 0.8, test_split: float = 0.1, eval_split: float = 0.1, custom_splits: bool = False):
     """
     Create a dataset from a HF dataset with BPE tokenization and overlapping chunks.
     
@@ -37,7 +37,20 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         add_special_tokens (bool): Whether to use tokenizer-managed BOS/EOS tokens for each chunk.
             When True, uses tokenizer's built-in add_special_tokens=True for proper token handling.
             When False, uses raw token sliding windows without special tokens.
+        train_split (float): Fraction of data to use for training, default is 0.8.
+        test_split (float): Fraction of data to use for testing, default is 0.1.
+        eval_split (float): Fraction of data to use for evaluation, default is 0.1.
+        custom_splits (bool): Whether to create custom train/test/eval splits from the data.
+            When True, creates new splits based on the split ratios.
+            When False, preserves the original dataset splits.
     """
+    # Validate split ratios
+    if custom_splits:
+        if abs(train_split + test_split + eval_split - 1.0) > 1e-6:
+            raise ValueError(f"Split ratios must sum to 1.0, got {train_split + test_split + eval_split}")
+        if any(split <= 0 for split in [train_split, test_split, eval_split]):
+            raise ValueError("All split ratios must be positive")
+    
     # Step 1: Load dataset
     dataset_id = hf_path.split("/")[-1]  # Get the dataset name from the full path
     dataset_name = f"/{dataset_id}-voc{vocabulary_size}-seq{max_seq_length}-overlap{int(overlap * 100)}"
@@ -76,6 +89,57 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         with open(text_file, "w", encoding="utf-8") as f:
             for item in dataset["train"]:
                 f.write(item["text"] + "\n")
+
+        # Step 2.5: Create custom splits if requested
+        if custom_splits:
+            # Check if dataset already has validation/eval split
+            has_validation = "validation" in dataset or "eval" in dataset or "val" in dataset
+            
+            if has_validation:
+                print("Dataset already contains validation/eval split. Skipping custom splitting.")
+                print(f"Using original dataset splits: {dataset}")
+            else:
+                print(f"Creating custom splits: train={train_split}, test={test_split}, eval={eval_split}")
+                
+                # Combine train and test splits as source data
+                available_splits = list(dataset.keys())
+                print(f"Available splits in dataset: {available_splits}")
+                
+                # Collect all available data for splitting
+                all_data = [dataset[split] for split in available_splits]
+                
+                # Concatenate all source data
+                if len(all_data) > 1:
+                    source_data = concatenate_datasets(all_data)
+                    print(f"Concatenated {len(all_data)} splits into source data")
+                else:
+                    source_data = all_data[0]
+                
+                total_examples = len(source_data)
+                print(f"Total examples for splitting: {total_examples}")
+                
+                # Calculate split sizes
+                train_size = int(total_examples * train_split)
+                test_size = int(total_examples * test_split)
+                eval_size = total_examples - train_size - test_size  # Remaining goes to eval
+                
+                print(f"Split sizes: train={train_size}, test={test_size}, eval={eval_size}")
+                
+                # Create the splits
+                train_data = source_data.select(range(0, train_size))
+                test_data = source_data.select(range(train_size, train_size + test_size))
+                eval_data = source_data.select(range(train_size + test_size, total_examples))
+                
+                # Update the dataset with new splits
+                dataset = DatasetDict({
+                    "train": train_data,
+                    "test": test_data,
+                    "validation": eval_data  # Using "validation" as the standard name
+                })
+                
+                print(f"Custom splits created: {dataset}")
+        else:
+            print(f"Using original dataset splits: {dataset}")
 
         tokenizer.train([text_file], trainer)
 
@@ -319,5 +383,9 @@ if __name__ == "__main__":
         overlap=0.25,
         include_text=False,
         endoftext_handling="keep",
-        add_special_tokens=True  # Add BOS/EOS tokens to each chunk
+        add_special_tokens=True,  # Add BOS/EOS tokens to each chunk
+        train_split=0.8,
+        test_split=0.1,
+        eval_split=0.1,
+        custom_splits=True  # Enable custom train/test/eval splits
     )
