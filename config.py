@@ -92,7 +92,7 @@ class DatasetConfig:
 
     def __post_init__(self):
         # Default test_split to eval_split if not provided
-        if self.test_split is None:
+        if 'test_split' not in self.__dict__.keys() or self.test_split is None:
             self.test_split = self.eval_split
             
         if self.files_to_download is not None and isinstance(self.files_to_download, ListConfig):

@@ -88,6 +88,7 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
 
     hyper_parameters = ckpt_data['hyper_parameters']
     config: CustomLLMPagConfig = hyper_parameters['config']
+    config.dataset.__post_init__()  # Ensure dataset config is initialized properly, even when restoring an old checkpoint
 
     # Double check that the tokenizer JSON already exists
     vocab_size = config.model.vocab_size
