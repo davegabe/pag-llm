@@ -325,13 +325,23 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
     return prefix_tokens[0]  # Return only the first sentence, which is the best one
 
 
-def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig,
-                   k_samples: int, skip_prefix_tokens: int, beam_size: int):
+def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str,
+                   cfg: CustomLLMPagConfig, k_samples: int, skip_prefix_tokens: int, beam_size: int):
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
         device=device,
         use_init=use_init,
         ckpt_file=ckpt_file,
+    )
+
+    # The baseline model is used in the bigram-only inversion.
+    # This is necessary because the bigram-only inversion uses the model to compute the perplexity of the generated sentences.
+    # But we have to compare it using the baseline model, not to have the side-effects of the PAG training.
+    baseline_model, _, _, _, _ = init_evaluation(
+        cfg=cfg,
+        device=device,
+        use_init=use_init,
+        ckpt_file=baseline_ckpt_file,
     )
 
     lightning_module.eval()
@@ -398,7 +408,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             # Print the generated text using the reverse bigram only
             bigram_text = backward_infer_bigram_only(
                 bigram_counts,
-                lightning_module,
+                baseline_model,
                 suffix_input_ids,
                 suffix_attention_mask,
                 prefix_tokens_len,
@@ -451,6 +461,7 @@ def main(cfg: CustomLLMPagConfig):
                    prefix_len=20,  # How many tokens to predict
                    use_init='bigram',
                    ckpt_file='tinystories_identity_grad_sum__1irckidh.ckpt',
+                   baseline_ckpt_file='tinystories_base__cs1bklll.ckpt',
                    cfg=cfg)
 
 
