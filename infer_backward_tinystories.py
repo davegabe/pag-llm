@@ -421,7 +421,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 input_ids=bigram_text,
                 attention_mask=torch.ones_like(bigram_text),
                 prefix_tokens_len=prefix_tokens_len,
-                tag='Bigram only',
+                tag='Bigram',
                 ansi_color='34',
             )
 
@@ -434,10 +434,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             ansi_color='32',
         )
 
+        # Limit the suffix text length to avoid too long lines
+        display_suffix_text_len = 150
+        display_suffix_text = suffix_text[:display_suffix_text_len] \
+                              + ('...' if len(suffix_text) > display_suffix_text_len else '')
+
         if sys.stdout.isatty():
-            print(f"\033[1m[...]\033[0m {suffix_text}")
+            print(f"\033[1m[...]\033[0m {display_suffix_text}")
         else:
-            print(f"[...] {suffix_text}")
+            print(f"[...] {display_suffix_text}")
 
         print()
 
@@ -455,7 +460,8 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
     ansi_colored_text = f"\033[0;{ansi_color}m{prefix_text}\033[0m" if sys.stdout.isatty() else prefix_text
 
-    print(f"{tag} [PPL - prefix: {prefix_ppl:.4f} / overall: {text_ppl:.4f} / penalty: {token_duplications}]: "
+    print(
+        f"{tag:<10} [PPL - prefix: {prefix_ppl:>6.1f} / overall: {text_ppl:>6.1f}]: "  # / penalty: {token_duplications}]: "
           f"{ansi_colored_text}")
 
 
