@@ -1,3 +1,5 @@
+import sys
+
 import torch
 from torch.nn import CrossEntropyLoss
 
@@ -432,7 +434,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             ansi_color='32',
         )
 
-        print(f"\033[1m[...]\033[0m {suffix_text}")
+        if sys.stdout.isatty():
+            print(f"\033[1m[...]\033[0m {suffix_text}")
+        else:
+            print(f"[...] {suffix_text}")
 
         print()
 
@@ -448,8 +453,10 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
     token_duplications = count_repeated_tokens(prefix_ids[None, :], prefix_attn_mask[None, :]).item()
 
+    ansi_colored_text = f"\033[0;{ansi_color}m{prefix_text}\033[0m" if sys.stdout.isatty() else prefix_text
+
     print(f"{tag} [PPL - prefix: {prefix_ppl:.4f} / overall: {text_ppl:.4f} / penalty: {token_duplications}]: "
-          f"\033[0;{ansi_color}m{prefix_text}\033[0m")
+          f"{ansi_colored_text}")
 
 
 @apply_config('inv-first-tiny-train')
