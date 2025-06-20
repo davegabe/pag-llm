@@ -99,7 +99,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, 0]
 
     # Predict the k-th token, based on the gradients of the first token embeddings
-    logits = forward_grad_embeddings(lightning_module.model, grad_x_embed)
+    logits = forward_grad_embeddings(lightning_module.model, grad_x_embed + x_embed[:, 0])
     assert logits.shape == (batch_size, vocab_size), \
         f'logits shape mismatch: {logits.shape} != ({batch_size}, {vocab_size})'
 
@@ -265,6 +265,66 @@ def get_batch_perplexity(lightning_module: BaseLMModel,
     return perplexity_batch
 
 
+def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
+                               lightning_module: BaseLMModel,
+                               suffix_input_ids: torch.Tensor,
+                               suffix_attention_mask: torch.Tensor,
+                               prefix_tokens_len: int,
+                               beam_size: int) -> torch.Tensor:
+    """
+    Perform backward inference using only the reverse bigram tensor.
+
+    Args:
+        bigram_counts: The full bigram probabilities tensor, not only the argmax.
+        lightning_module: The model to use for inference to compute the perplexity. Not used for prefix prediction.
+        suffix_input_ids: Suffix input IDs to be used for inference.
+        suffix_attention_mask: Attention mask for the suffix input IDs.
+        prefix_tokens_len: The length of the prefix tokens to generate.
+        beam_size: The number of beams to use for the search of the prefix with minimum perplexity.
+
+    Returns:
+        torch.Tensor: The predicted input IDs after applying the reverse bigram.
+    """
+    repeated_suffix_input_ids = suffix_input_ids.repeat(beam_size, 1)
+    repeated_attn_mask = suffix_attention_mask.repeat(beam_size, 1)
+    assert repeated_suffix_input_ids.ndim == 2, \
+        f'suffix_input_ids shape mismatch: {repeated_suffix_input_ids.shape} != (batch_size, seq_len)'
+    assert repeated_suffix_input_ids.shape == (beam_size, *suffix_input_ids.shape), \
+        f'suffix_input_ids shape mismatch: {repeated_suffix_input_ids.shape} != ({beam_size}, {suffix_input_ids.shape})'
+
+    prefix_tokens = torch.zeros((beam_size, prefix_tokens_len,), dtype=torch.int64, device=suffix_input_ids.device)
+    prefix_attn_mask = torch.zeros_like(prefix_tokens, dtype=torch.int64, device=suffix_input_ids.device)
+
+    first_token = repeated_suffix_input_ids[:, 0]  # The first token of the suffix
+
+    for i in range(prefix_tokens_len - 1, -1, -1):
+        # Create the batch of possible prefix tokens
+        candidate_sentences_ids = torch.cat([prefix_tokens[:, i:], repeated_suffix_input_ids], dim=1).repeat(beam_size,
+                                                                                                             1)
+        candidate_sentences_attn_mask = torch.cat([prefix_attn_mask[:, i:], repeated_attn_mask], dim=1).repeat(
+            beam_size, 1)
+        assert candidate_sentences_ids.shape == (beam_size ** 2, prefix_tokens_len - i + suffix_input_ids.shape[0]), \
+            f'candidate_sentences_ids shape mismatch: {candidate_sentences_ids.shape} != ({beam_size}, {beam_size}, {prefix_tokens_len - i + suffix_input_ids.shape[0]})'
+        assert candidate_sentences_attn_mask.shape == candidate_sentences_ids.shape, \
+            f'candidate_sentences_attn_mask shape mismatch: {candidate_sentences_attn_mask.shape} != {candidate_sentences_ids.shape}'
+
+        # Use the reverse bigram to get the corresponding prefix token (top-k, not just argmax)
+        candidate_sentences_ids[:, 0] = torch.topk(bigram_counts[first_token], k=beam_size, dim=-1).indices.flatten()
+        candidate_sentences_attn_mask[:, 0] = 1
+
+        # Choose the sentence with the lowest perplexity / the lowest loss
+        prefix_tokens[:, i:] = get_least_perplexity_sentences(
+            lightning_module=lightning_module,
+            x_input_ids=candidate_sentences_ids,
+            x_attention_mask=candidate_sentences_attn_mask,
+            beam_size=beam_size,
+            prefix_length=prefix_tokens_len - i,
+        )[0][:, i:prefix_tokens_len]
+        first_token = prefix_tokens[:, i]
+
+    return prefix_tokens[0]  # Return only the first sentence, which is the best one
+
+
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig,
                    k_samples: int, skip_prefix_tokens: int, beam_size: int):
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
@@ -334,6 +394,25 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             ansi_color='36',
         )
 
+        if use_init == 'bigram':
+            # Print the generated text using the reverse bigram only
+            bigram_text = backward_infer_bigram_only(
+                bigram_counts,
+                lightning_module,
+                suffix_input_ids,
+                suffix_attention_mask,
+                prefix_tokens_len,
+                beam_size,
+            )
+            print_text_stats(
+                lightning_module=lightning_module,
+                input_ids=bigram_text,
+                attention_mask=torch.ones_like(bigram_text),
+                prefix_tokens_len=prefix_tokens_len,
+                tag='Bigram only',
+                ansi_color='34',
+            )
+
         print_text_stats(
             lightning_module=lightning_module,
             input_ids=sample_input_ids,
@@ -365,13 +444,13 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
 @apply_config('inv-first-tiny-train')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:1',
+    run_evaluation(device='cuda:0',
                    k_samples=30,  # How many samples to take from the dataset
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
-                   beam_size=20,
+                   beam_size=5,
                    prefix_len=20,  # How many tokens to predict
                    use_init='bigram',
-                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
+                   ckpt_file='tinystories_identity_grad_sum__1irckidh.ckpt',
                    cfg=cfg)
 
 
