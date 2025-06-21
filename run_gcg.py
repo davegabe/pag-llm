@@ -198,7 +198,7 @@ def main(cfg: CustomLLMPagConfig):
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
 
-    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
+    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}_sum.json'
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
