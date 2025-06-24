@@ -9,7 +9,7 @@ def forward_grad_embeddings(
         grad_x_embed: torch.Tensor,
         norm: torch.nn.Module = None,
         tag: str = 'undefined',
-        log_info: dict[str, torch.Tensor] = None,
+        log_info: dict[str, torch.Tensor] = {},
 ) -> torch.Tensor: 
     """
     Project the gradients of the embeddings to the vocabulary space using the head of the model.
