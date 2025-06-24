@@ -56,6 +56,13 @@ class BaseLMModel(pl.LightningModule):
 
         loss = outputs.loss
         self.log(
+            f"{tag}/loss_ce",
+            loss,
+            prog_bar=True,
+            logger=True,
+            sync_dist=True
+        )
+        self.log(
             f"{tag}/loss",
             loss,
             prog_bar=True,
