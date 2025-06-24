@@ -53,6 +53,10 @@ def train(cfg: LLMPagConfig | CustomLLMPagConfig):
     # Instantiate model and data module
     lightning_model, data_module, model_name = instantiate_model_by_config(cfg)
 
+    # Prepare n-gram statistics if the model supports it
+    if hasattr(lightning_model, 'prepare_ngram_statistics'):
+        lightning_model.prepare_ngram_statistics(data_module)
+
     # Setup logger
     run_name = f"{model_name}-{cfg.training.method}"
     tags = [model_name, cfg.training.method, cfg.dataset.name]

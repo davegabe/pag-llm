@@ -8,6 +8,7 @@ from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings, compute_top_k_accuracies
+from utils.ngram_processor import NGramProcessor
 
 
 class IdentityGradEmbeddingsModel(BaseLMModel):
@@ -16,8 +17,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             model: PreTrainedModel,
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
+            model_name: str = 'identity',
     ):
-        super().__init__('identity', model, tokenizer, config)
+        super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
@@ -36,6 +38,169 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             print("Warning: None value found in mask_values, removing it.")
             self.mask_values.remove(None)
         print(f"Test model with mask values: {self.mask_values}")
+
+        # Use default normalization layer
+        self.emb_norm = None
+        
+        # Sign multiplier for gradient logits (typically 1 or -1)
+        self.grad_logits_sign = 1
+        
+        # Initialization methods for inverse validation
+        self.inverse_init_methods = ['random', 'constant', 'ngram_based']
+        self.current_init_method = 'random'  # Default method
+        
+        # N-gram processor for inverse validation
+        self.ngram_order = 2  # Default to bigram (predict based on n future tokens)
+        self.ngram_processor = NGramProcessor(
+            ngram_order=self.ngram_order,
+            cache_dir=config.model.output_dir / "ngram_cache" if hasattr(config.model, 'output_dir') else "./cache/ngrams",
+            mask_values=self.mask_values,
+            vocab_size=model.config.vocab_size,
+        )
+        self.use_sequential_prediction = False  # Whether to use sequential (token-by-token) prediction
+        
+        # Initialize structures for different initialization methods
+        self._setup_initialization_methods()
+
+    def inverse_forward(
+        self,
+        initial_token_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        shift_labels: torch.Tensor,
+        num_iterations: int = 10,
+        original_tokens: torch.Tensor = None
+    ) -> tuple[torch.Tensor, dict]:
+        """
+        Core inverse generation engine that performs iterative refinement to predict original tokens
+        from initial embeddings using gradient information.
+        
+        Args:
+            initial_token_ids: Starting token IDs of shape (batch_size, sequence_length)
+            attention_mask: Attention mask indicating valid positions
+            shift_labels: Target sequence for computing CE loss
+            num_iterations: Number of refinement iterations to perform
+            original_tokens: Ground-truth tokens for metric computation (optional)
+            
+        Returns:
+            tuple: (final_predicted_tokens, metrics_history)
+                - final_predicted_tokens: Final token predictions after all iterations
+                - metrics_history: Dictionary containing metrics for each iteration (if original_tokens provided)
+        """
+        # Clone inputs to avoid in-place modifications
+        current_token_ids = initial_token_ids.clone()
+        
+        # Get original valid tokens for metric computation if provided
+        original_valid_tokens = None
+        if original_tokens is not None:
+            original_valid_tokens = original_tokens[attention_mask == 1]
+            if original_valid_tokens.numel() == 0:
+                return current_token_ids, {}
+        
+        # Track metrics across iterations
+        metrics_history = {
+            'losses': [],
+            'accuracies': [],
+            'top_k_accuracies': []
+        }
+        
+        for iteration in range(num_iterations):
+            # Get embeddings for current tokens
+            current_x_embed = self.model.get_input_embeddings()(current_token_ids.detach())
+            current_x_embed.requires_grad_(True)
+
+            # Forward pass with current embeddings to get CE loss
+            outputs_current: CausalLMOutputWithPast = self.model(
+                inputs_embeds=current_x_embed,
+                attention_mask=attention_mask,
+                labels='dummy',
+                shift_labels=shift_labels,
+                output_hidden_states=False
+            )
+            loss_ce_current = outputs_current.loss
+
+            if loss_ce_current is None:
+                break  # Skip remaining iterations if loss computation fails
+
+            # Get gradients of this CE loss w.r.t. the current embeddings
+            try:
+                grad_wrt_current_x_embed_tuple = torch.autograd.grad(
+                    outputs=loss_ce_current,
+                    inputs=[current_x_embed],
+                    create_graph=False,
+                    allow_unused=False
+                )
+                grad_wrt_current_x_embed = grad_wrt_current_x_embed_tuple[0]
+            except RuntimeError as e:
+                break  # Skip remaining iterations if gradient computation fails
+
+            if grad_wrt_current_x_embed is None:
+                break
+
+            # Filter gradients and embeddings to valid token positions
+            grad_filtered = grad_wrt_current_x_embed[attention_mask == 1]
+            current_embed_filtered = current_x_embed[attention_mask == 1]
+
+            if grad_filtered.numel() == 0:
+                break
+
+            # Normalize the gradients
+            norm_val = grad_filtered.norm(dim=-1, keepdim=True)
+            grad_normalized = grad_filtered / (norm_val + 1e-8)
+
+            # Input for the PAG head: normalized gradient + corresponding current embedding
+            pag_head_input = grad_normalized + current_embed_filtered
+
+            # Create log info for this iteration
+            log_info_iter = {}
+
+            # Use PAG head to predict tokens
+            logits_pag_iter = forward_grad_embeddings(
+                self.model,
+                pag_head_input,
+                norm=self.emb_norm,
+                log_info=log_info_iter,
+                tag=f'inverse_gen_iter_{iteration}'
+            )
+
+            # Apply sign to logits
+            logits_pag_iter = logits_pag_iter * self.grad_logits_sign
+
+            # Compute metrics if original tokens are provided
+            if original_valid_tokens is not None:
+                # Compute loss and accuracy for this iteration
+                loss_pag_iter = F.cross_entropy(
+                    input=logits_pag_iter,
+                    target=original_valid_tokens,
+                    reduction='mean'
+                )
+
+                # Compute top-1 accuracy for this iteration
+                predicted_tokens = torch.argmax(logits_pag_iter, dim=-1)
+                accuracy_iter = (predicted_tokens == original_valid_tokens).float().mean()
+
+                # Compute top-k accuracies for k=[1,2,3] for this iteration
+                top_k_accuracies_iter = compute_top_k_accuracies(
+                    original_valid_tokens,
+                    logits_pag_iter,
+                    3,  # Compute for k=1,2,3
+                    f'inverse_gen_iter_{iteration}'
+                )
+
+                # Store metrics for this iteration
+                metrics_history['losses'].append(loss_pag_iter.item())
+                metrics_history['accuracies'].append(accuracy_iter.item())
+                metrics_history['top_k_accuracies'].append(top_k_accuracies_iter)
+
+            # Get the most probable tokens from logits and update current_token_ids
+            predicted_token_ids_filtered = torch.argmax(logits_pag_iter, dim=-1)
+
+            # Update the token IDs at valid positions with predicted tokens
+            current_token_ids_flat = current_token_ids.view(-1)
+            valid_positions = (attention_mask == 1).view(-1)
+            current_token_ids_flat[valid_positions] = predicted_token_ids_filtered
+            current_token_ids = current_token_ids_flat.view(current_token_ids.shape)
+
+        return current_token_ids, metrics_history
 
     def _compute_losses(self, batch: BatchType, top_k_samples: int, tag: str) -> tuple[
         torch.Tensor, torch.Tensor, torch.Tensor, dict]:
@@ -162,43 +327,310 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
     def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._step(batch, 'train')
 
-    def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
-        with torch.inference_mode(mode=False):
-            return self._step(batch, 'val')
-
-    def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+    def inverse_validation(self, batch: BatchType, batch_idx: int) -> None:
         """
-        Compute ability to for Inverse Language Modeling task using masked sequences.
-        Compute loss and accuracy on inverse K token task.
-
+        Perform randomized X validation using iterative refinement to predict original tokens
+        from random embeddings using gradient information.
+        
         Args:
             batch (BatchType): The batch of data.
-            batch_idx (int): The index of the batch.
+            batch_idx (int): The batch index.
         """
-        for first_tokens_to_predict in range(self.first_tokens_to_predict):
-            for mask_value in self.mask_values:
-                # Define the metric prefix
-                exp_prefix = f'test/m_{mask_value}_t_{first_tokens_to_predict}'
+        # Check if we should use sequential prediction (for n-gram based initialization)
+        if (self.current_init_method == 'ngram_based' and 
+            hasattr(self, 'use_sequential_prediction') and 
+            self.use_sequential_prediction):
+            self._inverse_validation_sequential(batch, batch_idx)
+        else:
+            self._inverse_validation_parallel(batch, batch_idx)
 
-                # Mask the first tokens
-                input_ids = batch.input_ids.clone()
-                input_ids[:, :first_tokens_to_predict] = mask_value
-                batch.input_ids = input_ids
+    def _inverse_validation_parallel(self, batch: BatchType, batch_idx: int) -> None:
+        """
+        Parallel inverse validation - predict all tokens simultaneously using the core inverse_generate engine.
+        """
+        # Clone data from batch to avoid in-place modifications
+        input_ids_cloned = batch.input_ids.clone()
+        attention_mask_cloned = batch.attention_mask.clone()
+        shift_labels_cloned = batch.shift_labels.clone()
 
-                with torch.inference_mode(mode=False):
-                    # Compute losses using common function
-                    loss_ce, loss_grads, loss, top_k_accuracies = self._compute_losses(
-                        batch,
-                        first_tokens_to_predict,
-                        tag='test',
-                    )
+        # Original tokens at valid positions (these will be our target for the PAG head)
+        original_valid_tokens = input_ids_cloned[attention_mask_cloned == 1]
 
-                    self.log_dict(top_k_accuracies, sync_dist=True, prog_bar=False)
-                    
-                    self.log_dict({
-                        f'{exp_prefix}/loss_inv': loss_grads,
-                    }, prog_bar=True, sync_dist=True)
+        if original_valid_tokens.numel() == 0:
+            return
+
+        # Create initial embeddings using the selected initialization method
+        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device)
         
-        # Ensure that the model has no gradients
-        self.model.zero_grad()
-        return torch.tensor(0.0, device=self.device)
+        # Use the core inverse generation engine
+        final_token_ids, metrics_history = self.inverse_forward(
+            initial_token_ids=initial_token_ids,
+            attention_mask=attention_mask_cloned,
+            shift_labels=shift_labels_cloned,
+            num_iterations=10,
+            original_tokens=input_ids_cloned
+        )
+
+        # Extract metrics from history for logging
+        iteration_losses = metrics_history.get('losses', [])
+        iteration_accuracies = metrics_history.get('accuracies', [])
+        iteration_top_k_accuracies = metrics_history.get('top_k_accuracies', [])
+
+        # Log iteration-specific metrics (optional, might be too verbose)
+        for iteration, (loss, accuracy, top_k_acc) in enumerate(zip(iteration_losses, iteration_accuracies, iteration_top_k_accuracies)):
+            if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:  # Log every 2 iteration + last
+                self.log_dict({
+                    f'val_random_x_pag/iter_{iteration}_loss': loss,
+                    f'val_random_x_pag/iter_{iteration}_acc': accuracy,
+                    **top_k_acc  # Include top-k accuracies for this iteration
+                }, prog_bar=False, sync_dist=True)
+
+        # Log final metrics and iteration statistics
+        if iteration_losses:
+            final_loss = iteration_losses[-1]
+            final_accuracy = iteration_accuracies[-1]
+            initial_loss = iteration_losses[0]
+            initial_accuracy = iteration_accuracies[0]
+
+            # Compute improvement metrics
+            loss_improvement = initial_loss - final_loss
+            accuracy_improvement = final_accuracy - initial_accuracy
+
+            # Get final top-k accuracies from the last iteration
+            final_accuracies = iteration_top_k_accuracies[-1] if iteration_top_k_accuracies else {}
+
+            # Log comprehensive metrics with standardized names for easy comparison
+            self.log_dict({
+                # Original method-specific metrics
+                f'val_random_x_pag/final_loss': final_loss,
+                f'val_random_x_pag/final_accuracy': final_accuracy,
+                f'val_random_x_pag/initial_loss': initial_loss,
+                f'val_random_x_pag/initial_accuracy': initial_accuracy,
+                f'val_random_x_pag/loss_improvement': loss_improvement,
+                f'val_random_x_pag/accuracy_improvement': accuracy_improvement,
+                f'val_random_x_pag/iterations_completed': len(iteration_losses),
+                
+                # Standardized comparison metrics
+                'val_inverse/final_loss_parallel': final_loss,
+                'val_inverse/final_accuracy_parallel': final_accuracy,
+                'val_inverse/initial_loss_parallel': initial_loss,
+                'val_inverse/initial_accuracy_parallel': initial_accuracy,
+                'val_inverse/loss_improvement_parallel': loss_improvement,
+                'val_inverse/accuracy_improvement_parallel': accuracy_improvement,
+                
+                **final_accuracies
+            }, prog_bar=False, sync_dist=True)
+
+    def _inverse_validation_sequential(self, batch: BatchType, batch_idx: int) -> None:
+        """
+        Sequential inverse validation - predict tokens one by one from last to first using n-gram statistics.
+        This approach is specifically designed for n-gram based initialization.
+        """
+        # Clone data from batch to avoid in-place modifications
+        input_ids_cloned = batch.input_ids.clone()
+        attention_mask_cloned = batch.attention_mask.clone()
+        shift_labels_cloned = batch.shift_labels.clone()
+
+        # Original tokens at valid positions (these will be our target)
+        original_valid_tokens = input_ids_cloned[attention_mask_cloned == 1]
+
+        if original_valid_tokens.numel() == 0:
+            return
+
+        # Create initial embeddings using n-gram initialization
+        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device)
+        current_token_ids = initial_token_ids.clone()
+
+        # Get the shape information
+        batch_size, seq_len = input_ids_cloned.shape
+        device = input_ids_cloned.device
+
+        # Track metrics for n-gram predictions
+        total_predictions = 0
+        correct_predictions = 0
+
+        # Process each sequence in the batch for n-gram predictions
+        for batch_idx_seq in range(batch_size):
+            sequence_mask = attention_mask_cloned[batch_idx_seq]
+            valid_positions = torch.where(sequence_mask == 1)[0]
+            
+            if len(valid_positions) <= self.ngram_order:
+                continue  # Skip sequences that are too short for n-gram prediction
+
+            # Predict tokens from last to first (excluding the last n tokens which serve as context)
+            for pos_idx in range(len(valid_positions) - self.ngram_order - 1, -1, -1):
+                current_pos = valid_positions[pos_idx].item()
+                
+                # Get the context (next N tokens)
+                context_start = current_pos + 1
+                context_end = min(current_pos + 1 + self.ngram_order, seq_len)
+                context_positions = valid_positions[
+                    (valid_positions >= context_start) & (valid_positions < context_end)
+                ]
+                
+                if len(context_positions) < self.ngram_order:
+                    continue  # Not enough context for n-gram prediction
+                
+                # Extract context tokens from current prediction
+                context_tokens = [current_token_ids[batch_idx_seq, pos].item() for pos in context_positions]
+                
+                # Predict token using n-gram statistics
+                predicted_token = self.ngram_processor.predict_token(context_tokens, device)
+                
+                # Update the prediction
+                current_token_ids[batch_idx_seq, current_pos] = predicted_token
+                
+                # Check accuracy
+                target_token = input_ids_cloned[batch_idx_seq, current_pos].item()
+                if predicted_token == target_token:
+                    correct_predictions += 1
+                total_predictions += 1
+
+        # Now perform iterative refinement using gradients via the core engine
+        final_token_ids, metrics_history = self.inverse_forward(
+            initial_token_ids=current_token_ids,  # Start with n-gram initialized tokens
+            attention_mask=attention_mask_cloned,
+            shift_labels=shift_labels_cloned,
+            num_iterations=5,  # Fewer iterations for sequential approach
+            original_tokens=input_ids_cloned
+        )
+
+        # Extract metrics from history for logging
+        iteration_losses = metrics_history.get('losses', [])
+        iteration_accuracies = metrics_history.get('accuracies', [])
+
+        # Log iteration-specific metrics
+        for iteration, (loss, accuracy) in enumerate(zip(iteration_losses, iteration_accuracies)):
+            if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:
+                self.log_dict({
+                    f'val_sequential_pag/iter_{iteration}_loss': loss,
+                    f'val_sequential_pag/iter_{iteration}_acc': accuracy,
+                }, prog_bar=False, sync_dist=True)
+
+        # Log n-gram prediction accuracy
+        ngram_accuracy = correct_predictions / total_predictions if total_predictions > 0 else 0.0
+
+        # Log final metrics
+        if iteration_losses:
+            final_loss = iteration_losses[-1]
+            final_accuracy = iteration_accuracies[-1]
+            initial_loss = iteration_losses[0]
+            initial_accuracy = iteration_accuracies[0]
+
+            # Compute improvement metrics
+            loss_improvement = initial_loss - final_loss
+            accuracy_improvement = final_accuracy - initial_accuracy
+
+            # Log comprehensive metrics with standardized names for easy comparison
+            self.log_dict({
+                # Original method-specific metrics
+                f'val_sequential_pag/ngram_accuracy': ngram_accuracy,
+                f'val_sequential_pag/total_predictions': total_predictions,
+                f'val_sequential_pag/final_loss': final_loss,
+                f'val_sequential_pag/final_accuracy': final_accuracy,
+                f'val_sequential_pag/initial_loss': initial_loss,
+                f'val_sequential_pag/initial_accuracy': initial_accuracy,
+                f'val_sequential_pag/loss_improvement': loss_improvement,
+                f'val_sequential_pag/accuracy_improvement': accuracy_improvement,
+                f'val_sequential_pag/iterations_completed': len(iteration_losses),
+                
+                # Standardized comparison metrics
+                'val_inverse/final_loss_sequential': final_loss,
+                'val_inverse/final_accuracy_sequential': final_accuracy,
+                'val_inverse/initial_loss_sequential': initial_loss,
+                'val_inverse/initial_accuracy_sequential': initial_accuracy,
+                'val_inverse/loss_improvement_sequential': loss_improvement,
+                'val_inverse/accuracy_improvement_sequential': accuracy_improvement,
+                
+                # Sequential-specific metrics with standardized names
+                'val_inverse/ngram_accuracy_sequential': ngram_accuracy,
+                'val_inverse/total_predictions_sequential': total_predictions,
+            }, prog_bar=False, sync_dist=True)
+
+    def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        with torch.inference_mode(mode=False):
+            # 1. Perform default validation
+            original_val_loss = self._step(batch, 'val')  # Logs 'val/...' metrics
+
+            # 2. Perform inverse validation (randomized X validation)
+            self.inverse_validation(batch, batch_idx)
+
+        return original_val_loss  # Return loss from the default validation part
+
+    def _setup_initialization_methods(self):
+        """
+        Initialize data structures needed for different initialization methods.
+        """
+        # For constant initialization
+        self.constant_token_id = self.tokenizer.mask_token_id if self.tokenizer.mask_token_id is not None else self.tokenizer.unk_token_id
+        if self.constant_token_id is None:
+            # Fallback to token ID 0 if no special tokens are available
+            self.constant_token_id = 0
+        
+        print(f"Initialized inverse validation methods: {self.inverse_init_methods}")
+        print(f"Current method: {self.current_init_method}")
+        print(f"Constant token ID: {self.constant_token_id}")
+
+    def compute_ngram_statistics(self, data_module):
+        """
+        Compute n-gram statistics from the training dataset using the NGramProcessor.
+        This should be called before training starts.
+        
+        Args:
+            data_module: The Lightning data module containing the training data
+        """
+        print(f"Computing {self.ngram_order}-gram statistics using NGramProcessor...")
+        
+        # Fit the n-gram processor on the training data
+        self.ngram_processor.fit(data_module)
+        
+        # Enable sequential prediction for n-gram based initialization
+        if self.current_init_method == 'ngram_based':
+            self.use_sequential_prediction = True
+            print("Enabled sequential prediction for n-gram based initialization")
+        
+        # Print statistics
+        stats = self.ngram_processor.get_statistics()
+        print(f"N-gram processor fitted successfully:")
+        for key, value in stats.items():
+            if key != 'mask_values':  # Skip printing mask values as they can be long
+                print(f"  {key}: {value}")
+
+    def _get_initial_tokens(self, input_shape: torch.Size, device: torch.device, method: str = None) -> torch.Tensor:
+        """
+        Generate initial tokens based on the specified initialization method.
+        
+        Args:
+            input_shape: Shape of the input tensor (batch_size, sequence_length)
+            device: Device to place the tensor on
+            method: Initialization method to use. If None, uses self.current_init_method
+            
+        Returns:
+            torch.Tensor: Initial token IDs of shape input_shape
+        """
+        if method is None:
+            method = self.current_init_method
+            
+        if method == 'random':
+            return torch.randint(0, self.model.config.vocab_size, input_shape, device=device)
+        elif method == 'constant':
+            return torch.full(input_shape, self.constant_token_id, device=device, dtype=torch.long)
+        elif method == 'ngram_based':
+            return torch.randint(0, self.model.config.vocab_size, input_shape, device=device)
+        else:
+            raise ValueError(f"Unknown initialization method: {method}")
+
+    def prepare_ngram_statistics(self, data_module):
+        """
+        Prepare n-gram statistics if using n-gram based initialization.
+        This should be called before training starts.
+        
+        Args:
+            data_module: The Lightning data module containing the training data
+        """
+        if 'ngram_based' in self.inverse_init_methods:
+            print("Preparing n-gram statistics for inverse validation...")
+            self.compute_ngram_statistics(data_module)
+            print("N-gram statistics preparation completed.")
+        else:
+            print("N-gram based initialization not enabled, skipping n-gram statistics computation.")
