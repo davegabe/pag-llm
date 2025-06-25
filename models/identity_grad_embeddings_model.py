@@ -49,6 +49,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Initialization methods for inverse validation
         self.inverse_init_methods = ['ngram_based'] #['random', 'constant', 'ngram_based']
         self.num_iterations = num_iterations  # Default number of iterations for inverse generation
+        self.tokens_per_iteration = 1  # Number of tokens to predict per iteration (default is 1, can be adjusted)
         
         # N-gram processor for inverse validation
         self.ngram_order = 2  # Default to bigram (predict based on n future tokens)
@@ -60,7 +61,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         )
         
         # Initialize structures for different initialization methods
-        self._setup_initialization_methods()
+        self.constant_token_id = self.tokenizer.mask_token_id
 
     def inverse_forward(
         self,
@@ -547,19 +548,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             self.inverse_validation(batch, batch_idx, 'test')
 
         return original_test_loss  # Return loss from the default test part
-
-    def _setup_initialization_methods(self):
-        """
-        Initialize data structures needed for different initialization methods.
-        """
-        # For constant initialization
-        self.constant_token_id = self.tokenizer.mask_token_id if self.tokenizer.mask_token_id is not None else self.tokenizer.unk_token_id
-        if self.constant_token_id is None:
-            # Fallback to token ID 0 if no special tokens are available
-            self.constant_token_id = 0
-        
-        print(f"Initialized inverse validation methods: {self.inverse_init_methods}")
-        print(f"Constant token ID: {self.constant_token_id}")
 
     def compute_ngram_statistics(self, data_module):
         """
