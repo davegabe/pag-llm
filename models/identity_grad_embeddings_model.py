@@ -141,20 +141,13 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             if grad_filtered.numel() == 0:
                 break
 
-            # Normalize the gradients
-            norm_val = grad_filtered.norm(dim=-1, keepdim=True)
-            grad_normalized = grad_filtered / (norm_val + 1e-8)
-
-            # Input for the PAG head: normalized gradient + corresponding current embedding
-            pag_head_input = grad_normalized + current_embed_filtered
-
             # Create log info for this iteration
             log_info_iter = {}
 
             # Use PAG head to predict tokens
             logits_pag_iter = forward_grad_embeddings(
                 self.model,
-                pag_head_input,
+                current_embed_filtered - grad_filtered,
                 norm=self.emb_norm,
                 log_info=log_info_iter,
                 tag=f'inverse_gen_iter_{iteration}'
@@ -265,7 +258,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
 
             # Forward pass to get the logits and probabilities
-            logits = forward_grad_embeddings(self.model, x_embed[batch.attention_mask == 1] + grad_x_embed)
+            logits = forward_grad_embeddings(self.model, x_embed[batch.attention_mask == 1] - grad_x_embed)
             assert logits.shape == (n_first, vocab_size), \
                 f'Expected logits to be of shape (n\'={n_first}, {vocab_size=}), but got {logits.shape}'
 
