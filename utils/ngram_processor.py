@@ -57,10 +57,6 @@ class NGramProcessor:
             str(self.vocab_size),
         ]
         
-        if hasattr(data_module, 'config'):
-            config_dict = data_module.config.__dict__ if hasattr(data_module.config, '__dict__') else str(data_module.config)
-            hash_components.append(str(config_dict))
-        
         if hasattr(data_module, 'data_dir'):
             hash_components.append(str(data_module.data_dir))
         elif hasattr(data_module, 'dataset_name'):
