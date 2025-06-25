@@ -120,15 +120,15 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 break  # Skip remaining iterations if loss computation fails
 
             # Get gradients of this CE loss w.r.t. the current embeddings
+            grad_wrt_current_x_embed: torch.Tensor | None = None
             try:
-                grad_wrt_current_x_embed_tuple = torch.autograd.grad(
+                grad_wrt_current_x_embed = torch.autograd.grad(
                     outputs=loss_ce_current,
                     inputs=[current_x_embed],
                     create_graph=False,
                     allow_unused=False
-                )
-                grad_wrt_current_x_embed = grad_wrt_current_x_embed_tuple[0]
-            except RuntimeError as e:
+                )[0]
+            except RuntimeError:
                 break  # Skip remaining iterations if gradient computation fails
 
             if grad_wrt_current_x_embed is None:
