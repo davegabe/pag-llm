@@ -18,6 +18,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
             model_name: str = 'identity',
+            num_iterations: int = 1
     ):
         super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
@@ -47,6 +48,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         
         # Initialization methods for inverse validation
         self.inverse_init_methods = ['ngram_based'] #['random', 'constant', 'ngram_based']
+        self.num_iterations = num_iterations  # Default number of iterations for inverse generation
         
         # N-gram processor for inverse validation
         self.ngram_order = 2  # Default to bigram (predict based on n future tokens)
@@ -65,7 +67,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         initial_token_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         shift_labels: torch.Tensor,
-        num_iterations: int = 10,
         original_tokens: torch.Tensor = None
     ) -> tuple[torch.Tensor, dict]:
         """
@@ -76,7 +77,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             initial_token_ids: Starting token IDs of shape (batch_size, sequence_length)
             attention_mask: Attention mask indicating valid positions
             shift_labels: Target sequence for computing CE loss
-            num_iterations: Number of refinement iterations to perform
             original_tokens: Ground-truth tokens for metric computation (optional)
             
         Returns:
@@ -101,7 +101,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             'top_k_accuracies': []
         }
         
-        for iteration in range(num_iterations):
+        for iteration in range(self.num_iterations):
             # Get embeddings for current tokens
             current_x_embed = self.model.get_input_embeddings()(current_token_ids.detach())
             current_x_embed.requires_grad_(True)
@@ -364,7 +364,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             initial_token_ids=initial_token_ids,
             attention_mask=attention_mask_cloned,
             shift_labels=shift_labels_cloned,
-            num_iterations=10,
             original_tokens=input_ids_cloned
         )
 
@@ -486,7 +485,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             initial_token_ids=current_token_ids,  # Start with n-gram initialized tokens
             attention_mask=attention_mask_cloned,
             shift_labels=shift_labels_cloned,
-            num_iterations=5,  # Fewer iterations for sequential approach
             original_tokens=input_ids_cloned
         )
 
