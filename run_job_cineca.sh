@@ -38,12 +38,10 @@ module load profile/deeplrn
 module load anaconda3
 activate ilm
 
-cd "/home/$USER/pag-llm"
-source .venv/bin/activate
+cd "/leonardo/home/userexternal/$USER/pag-llm"
 
 nvidia-smi
 
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 srun python train.py "$@"
-
