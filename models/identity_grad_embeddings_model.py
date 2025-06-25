@@ -47,7 +47,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.grad_logits_sign = 1
         
         # Initialization methods for inverse validation
-        self.inverse_init_methods = ['ngram_based'] #['random', 'constant', 'ngram_based']
+        self.inverse_init_methods = [] #['random', 'constant', 'ngram_based']
         self.num_iterations = num_iterations  # Default number of iterations for inverse generation
         self.tokens_per_iteration = 1  # Number of tokens to predict per iteration (default is 1, can be adjusted)
         
