@@ -15,25 +15,11 @@
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
 #SBATCH --error=%x-%j.SLURMerr                # File for standard error (%x: job name, %j: job ID)
-#SBATCH --account=EUHPC_D25_096               # Project account number
+#SBATCH --account=euhpc_d25_096               # Project account number
 
-
-send_job_status_message() {
-	TELEGRAM_BOT_TOKEN="7587099540:AAFaYgws0ROIjDLtbaTuBk5zQbeMHejrDrs"
-	TELEGRAM_DEST_ID="-1002670256273"
-	curl -X POST \
-	     --silent \
-	     -H 'Content-Type: application/json' \
-	     -d "{\"chat_id\": \"$TELEGRAM_DEST_ID\", \"text\": \"Job $1: $SLURM_JOB_NAME, with ID: $SLURM_JOB_ID, triggered by $USER\"}" \
-	     https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage \
-	     >/dev/null
-}
-
-trap 'send_job_status_message ERRORED' ERR
 
 set -eo pipefail
 
-send_job_status_message started
 
 echo "Running with the following arguments:"
 echo "Job name: $SLURM_JOB_NAME"
@@ -60,4 +46,3 @@ export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 srun python train.py "$@"
 
-send_job_status_message finished
