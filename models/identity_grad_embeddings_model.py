@@ -325,23 +325,24 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
     def training_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         return self._step(batch, 'train')
 
-    def inverse_validation(self, batch: BatchType, batch_idx: int) -> None:
+    def inverse_validation(self, batch: BatchType, batch_idx: int, tag: str = 'val') -> None:
         """
         Perform inverse validation using all initialization methods and log results separately.
         
         Args:
             batch (BatchType): The batch of data.
             batch_idx (int): The batch index.
+            tag (str): Tag prefix for logging (e.g., 'val', 'test').
         """
         # Test each initialization method
         for method in self.inverse_init_methods:
             # Choose validation approach based on method
             if method == 'ngram_based':
-                self._inverse_validation_sequential_with_method(batch, batch_idx, method)
+                self._inverse_validation_sequential_with_method(batch, batch_idx, method, tag)
             else:
-                self._inverse_validation_parallel_with_method(batch, batch_idx, method)
+                self._inverse_validation_parallel_with_method(batch, batch_idx, method, tag)
 
-    def _inverse_validation_parallel_with_method(self, batch: BatchType, batch_idx: int, method: str) -> None:
+    def _inverse_validation_parallel_with_method(self, batch: BatchType, batch_idx: int, method: str, tag: str = 'val') -> None:
         """
         Parallel inverse validation - predict all tokens simultaneously using the core inverse_generate engine.
         
@@ -349,6 +350,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             batch (BatchType): The batch of data.
             batch_idx (int): The batch index.
             method (str): The initialization method to use.
+            tag (str): Tag prefix for logging (e.g., 'val', 'test').
         """
         # Clone data from batch to avoid in-place modifications
         input_ids_cloned = batch.input_ids.clone()
@@ -382,9 +384,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         for iteration, (loss, accuracy, top_k_acc) in enumerate(zip(iteration_losses, iteration_accuracies, iteration_top_k_accuracies)):
             if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:  # Log every 2 iteration + last
                 self.log_dict({
-                    f'val_inverse_{method}/iter_{iteration}_loss': loss,
-                    f'val_inverse_{method}/iter_{iteration}_acc': accuracy,
-                    **{f'val_inverse_{method}/{k}': v for k, v in top_k_acc.items()}
+                    f'{tag}_inverse_{method}/iter_{iteration}_loss': loss,
+                    f'{tag}_inverse_{method}/iter_{iteration}_acc': accuracy,
+                    **{f'{tag}_inverse_{method}/{k}': v for k, v in top_k_acc.items()}
                 }, prog_bar=False, sync_dist=True)
 
         # Log final metrics and iteration statistics
@@ -404,18 +406,18 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             # Log comprehensive metrics with method-specific names for easy comparison
             self.log_dict({
                 # Method-specific metrics
-                f'val_inverse_{method}/final_loss': final_loss,
-                f'val_inverse_{method}/final_accuracy': final_accuracy,
-                f'val_inverse_{method}/initial_loss': initial_loss,
-                f'val_inverse_{method}/initial_accuracy': initial_accuracy,
-                f'val_inverse_{method}/loss_improvement': loss_improvement,
-                f'val_inverse_{method}/accuracy_improvement': accuracy_improvement,
-                f'val_inverse_{method}/iterations_completed': len(iteration_losses),
+                f'{tag}_inverse_{method}/final_loss': final_loss,
+                f'{tag}_inverse_{method}/final_accuracy': final_accuracy,
+                f'{tag}_inverse_{method}/initial_loss': initial_loss,
+                f'{tag}_inverse_{method}/initial_accuracy': initial_accuracy,
+                f'{tag}_inverse_{method}/loss_improvement': loss_improvement,
+                f'{tag}_inverse_{method}/accuracy_improvement': accuracy_improvement,
+                f'{tag}_inverse_{method}/iterations_completed': len(iteration_losses),
                 
-                **{f'val_inverse_{method}/{k}': v for k, v in final_accuracies.items()}
+                **{f'{tag}_inverse_{method}/{k}': v for k, v in final_accuracies.items()}
             }, prog_bar=False, sync_dist=True)
 
-    def _inverse_validation_sequential_with_method(self, batch: BatchType, batch_idx: int, method: str) -> None:
+    def _inverse_validation_sequential_with_method(self, batch: BatchType, batch_idx: int, method: str, tag: str = 'val') -> None:
         """
         Sequential inverse validation - predict tokens one by one from last to first using n-gram statistics.
         This approach is specifically designed for n-gram based initialization.
@@ -424,6 +426,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             batch (BatchType): The batch of data.
             batch_idx (int): The batch index.
             method (str): The initialization method to use.
+            tag (str): Tag prefix for logging (e.g., 'val', 'test').
         """
         # Clone data from batch to avoid in-place modifications
         input_ids_cloned = batch.input_ids.clone()
@@ -502,8 +505,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         for iteration, (loss, accuracy) in enumerate(zip(iteration_losses, iteration_accuracies)):
             if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:
                 self.log_dict({
-                    f'val_inverse_{method}/iter_{iteration}_loss': loss,
-                    f'val_inverse_{method}/iter_{iteration}_acc': accuracy,
+                    f'{tag}_inverse_{method}/iter_{iteration}_loss': loss,
+                    f'{tag}_inverse_{method}/iter_{iteration}_acc': accuracy,
                 }, prog_bar=False, sync_dist=True)
 
         # Log n-gram prediction accuracy
@@ -523,15 +526,15 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             # Log comprehensive metrics with method-specific names for easy comparison
             self.log_dict({
                 # Method-specific metrics
-                f'val_inverse_{method}/ngram_accuracy': ngram_accuracy,
-                f'val_inverse_{method}/total_predictions': total_predictions,
-                f'val_inverse_{method}/final_loss': final_loss,
-                f'val_inverse_{method}/final_accuracy': final_accuracy,
-                f'val_inverse_{method}/initial_loss': initial_loss,
-                f'val_inverse_{method}/initial_accuracy': initial_accuracy,
-                f'val_inverse_{method}/loss_improvement': loss_improvement,
-                f'val_inverse_{method}/accuracy_improvement': accuracy_improvement,
-                f'val_inverse_{method}/iterations_completed': len(iteration_losses),
+                f'{tag}_inverse_{method}/ngram_accuracy': ngram_accuracy,
+                f'{tag}_inverse_{method}/total_predictions': total_predictions,
+                f'{tag}_inverse_{method}/final_loss': final_loss,
+                f'{tag}_inverse_{method}/final_accuracy': final_accuracy,
+                f'{tag}_inverse_{method}/initial_loss': initial_loss,
+                f'{tag}_inverse_{method}/initial_accuracy': initial_accuracy,
+                f'{tag}_inverse_{method}/loss_improvement': loss_improvement,
+                f'{tag}_inverse_{method}/accuracy_improvement': accuracy_improvement,
+                f'{tag}_inverse_{method}/iterations_completed': len(iteration_losses),
             }, prog_bar=False, sync_dist=True)
 
     def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
@@ -540,9 +543,19 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             original_val_loss = self._step(batch, 'val')  # Logs 'val/...' metrics
 
             # 2. Perform inverse validation (randomized X validation)
-            self.inverse_validation(batch, batch_idx)
+            self.inverse_validation(batch, batch_idx, 'val')
 
         return original_val_loss  # Return loss from the default validation part
+
+    def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        with torch.inference_mode(mode=False):
+            # 1. Perform default test evaluation
+            original_test_loss = self._step(batch, 'test')  # Logs 'test/...' metrics
+
+            # 2. Perform inverse validation (randomized X validation) for testing
+            self.inverse_validation(batch, batch_idx, 'test')
+
+        return original_test_loss  # Return loss from the default test part
 
     def _setup_initialization_methods(self):
         """
