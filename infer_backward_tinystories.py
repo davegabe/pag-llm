@@ -101,7 +101,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, 0]
 
     # Predict the k-th token, based on the gradients of the first token embeddings
-    logits = forward_grad_embeddings(lightning_module.model, grad_x_embed + x_embed[:, 0])
+    logits = forward_grad_embeddings(lightning_module.model, x_embed[:, 0] - grad_x_embed)
     assert logits.shape == (batch_size, vocab_size), \
         f'logits shape mismatch: {logits.shape} != ({batch_size}, {vocab_size})'
 
