@@ -9,7 +9,7 @@
 #SBATCH --time=1-00:00:00                     # Maximum wall time for "normal" QOS
 
 #SBATCH --nodes=1                             # Number of nodes to use
-#SBATCH --ntasks-per-node=1                   # Number of MPI tasks per node (e.g., 1 per GPU)
+#SBATCH --ntasks-per-node=4                   # Number of MPI tasks per node (e.g., 1 per GPU)
 #SBATCH --cpus-per-task=4                     # Number of CPU cores per task (adjust as needed)
 #SBATCH --gres=gpu:4                          # Number of GPUs per node
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
