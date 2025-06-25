@@ -46,8 +46,7 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         self.grad_logits_sign = 1
         
         # Initialization methods for inverse validation
-        self.inverse_init_methods = ['random', 'constant', 'ngram_based']
-        self.current_init_method = 'random'  # Default method
+        self.inverse_init_methods = ['ngram_based'] #['random', 'constant', 'ngram_based']
         
         # N-gram processor for inverse validation
         self.ngram_order = 2  # Default to bigram (predict based on n future tokens)
@@ -57,7 +56,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             mask_values=self.mask_values,
             vocab_size=model.config.vocab_size,
         )
-        self.use_sequential_prediction = False  # Whether to use sequential (token-by-token) prediction
         
         # Initialize structures for different initialization methods
         self._setup_initialization_methods()
@@ -329,24 +327,28 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
     def inverse_validation(self, batch: BatchType, batch_idx: int) -> None:
         """
-        Perform randomized X validation using iterative refinement to predict original tokens
-        from random embeddings using gradient information.
+        Perform inverse validation using all initialization methods and log results separately.
         
         Args:
             batch (BatchType): The batch of data.
             batch_idx (int): The batch index.
         """
-        # Check if we should use sequential prediction (for n-gram based initialization)
-        if (self.current_init_method == 'ngram_based' and 
-            hasattr(self, 'use_sequential_prediction') and 
-            self.use_sequential_prediction):
-            self._inverse_validation_sequential(batch, batch_idx)
-        else:
-            self._inverse_validation_parallel(batch, batch_idx)
+        # Test each initialization method
+        for method in self.inverse_init_methods:
+            # Choose validation approach based on method
+            if method == 'ngram_based':
+                self._inverse_validation_sequential_with_method(batch, batch_idx, method)
+            else:
+                self._inverse_validation_parallel_with_method(batch, batch_idx, method)
 
-    def _inverse_validation_parallel(self, batch: BatchType, batch_idx: int) -> None:
+    def _inverse_validation_parallel_with_method(self, batch: BatchType, batch_idx: int, method: str) -> None:
         """
         Parallel inverse validation - predict all tokens simultaneously using the core inverse_generate engine.
+        
+        Args:
+            batch (BatchType): The batch of data.
+            batch_idx (int): The batch index.
+            method (str): The initialization method to use.
         """
         # Clone data from batch to avoid in-place modifications
         input_ids_cloned = batch.input_ids.clone()
@@ -359,8 +361,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         if original_valid_tokens.numel() == 0:
             return
 
-        # Create initial embeddings using the selected initialization method
-        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device)
+        # Create initial embeddings using the specified initialization method
+        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device, method)
         
         # Use the core inverse generation engine
         final_token_ids, metrics_history = self.inverse_forward(
@@ -380,9 +382,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         for iteration, (loss, accuracy, top_k_acc) in enumerate(zip(iteration_losses, iteration_accuracies, iteration_top_k_accuracies)):
             if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:  # Log every 2 iteration + last
                 self.log_dict({
-                    f'val_random_x_pag/iter_{iteration}_loss': loss,
-                    f'val_random_x_pag/iter_{iteration}_acc': accuracy,
-                    **top_k_acc  # Include top-k accuracies for this iteration
+                    f'val_inverse_{method}/iter_{iteration}_loss': loss,
+                    f'val_inverse_{method}/iter_{iteration}_acc': accuracy,
+                    **{f'val_inverse_{method}/{k}': v for k, v in top_k_acc.items()}
                 }, prog_bar=False, sync_dist=True)
 
         # Log final metrics and iteration statistics
@@ -399,32 +401,29 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             # Get final top-k accuracies from the last iteration
             final_accuracies = iteration_top_k_accuracies[-1] if iteration_top_k_accuracies else {}
 
-            # Log comprehensive metrics with standardized names for easy comparison
+            # Log comprehensive metrics with method-specific names for easy comparison
             self.log_dict({
-                # Original method-specific metrics
-                f'val_random_x_pag/final_loss': final_loss,
-                f'val_random_x_pag/final_accuracy': final_accuracy,
-                f'val_random_x_pag/initial_loss': initial_loss,
-                f'val_random_x_pag/initial_accuracy': initial_accuracy,
-                f'val_random_x_pag/loss_improvement': loss_improvement,
-                f'val_random_x_pag/accuracy_improvement': accuracy_improvement,
-                f'val_random_x_pag/iterations_completed': len(iteration_losses),
+                # Method-specific metrics
+                f'val_inverse_{method}/final_loss': final_loss,
+                f'val_inverse_{method}/final_accuracy': final_accuracy,
+                f'val_inverse_{method}/initial_loss': initial_loss,
+                f'val_inverse_{method}/initial_accuracy': initial_accuracy,
+                f'val_inverse_{method}/loss_improvement': loss_improvement,
+                f'val_inverse_{method}/accuracy_improvement': accuracy_improvement,
+                f'val_inverse_{method}/iterations_completed': len(iteration_losses),
                 
-                # Standardized comparison metrics
-                'val_inverse/final_loss_parallel': final_loss,
-                'val_inverse/final_accuracy_parallel': final_accuracy,
-                'val_inverse/initial_loss_parallel': initial_loss,
-                'val_inverse/initial_accuracy_parallel': initial_accuracy,
-                'val_inverse/loss_improvement_parallel': loss_improvement,
-                'val_inverse/accuracy_improvement_parallel': accuracy_improvement,
-                
-                **final_accuracies
+                **{f'val_inverse_{method}/{k}': v for k, v in final_accuracies.items()}
             }, prog_bar=False, sync_dist=True)
 
-    def _inverse_validation_sequential(self, batch: BatchType, batch_idx: int) -> None:
+    def _inverse_validation_sequential_with_method(self, batch: BatchType, batch_idx: int, method: str) -> None:
         """
         Sequential inverse validation - predict tokens one by one from last to first using n-gram statistics.
         This approach is specifically designed for n-gram based initialization.
+        
+        Args:
+            batch (BatchType): The batch of data.
+            batch_idx (int): The batch index.
+            method (str): The initialization method to use.
         """
         # Clone data from batch to avoid in-place modifications
         input_ids_cloned = batch.input_ids.clone()
@@ -437,8 +436,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         if original_valid_tokens.numel() == 0:
             return
 
-        # Create initial embeddings using n-gram initialization
-        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device)
+        # Create initial embeddings using the specified initialization method
+        initial_token_ids = self._get_initial_tokens(input_ids_cloned.shape, input_ids_cloned.device, method)
         current_token_ids = initial_token_ids.clone()
 
         # Get the shape information
@@ -503,8 +502,8 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         for iteration, (loss, accuracy) in enumerate(zip(iteration_losses, iteration_accuracies)):
             if iteration % 2 == 0 or iteration == len(iteration_losses) - 1:
                 self.log_dict({
-                    f'val_sequential_pag/iter_{iteration}_loss': loss,
-                    f'val_sequential_pag/iter_{iteration}_acc': accuracy,
+                    f'val_inverse_{method}/iter_{iteration}_loss': loss,
+                    f'val_inverse_{method}/iter_{iteration}_acc': accuracy,
                 }, prog_bar=False, sync_dist=True)
 
         # Log n-gram prediction accuracy
@@ -521,30 +520,18 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             loss_improvement = initial_loss - final_loss
             accuracy_improvement = final_accuracy - initial_accuracy
 
-            # Log comprehensive metrics with standardized names for easy comparison
+            # Log comprehensive metrics with method-specific names for easy comparison
             self.log_dict({
-                # Original method-specific metrics
-                f'val_sequential_pag/ngram_accuracy': ngram_accuracy,
-                f'val_sequential_pag/total_predictions': total_predictions,
-                f'val_sequential_pag/final_loss': final_loss,
-                f'val_sequential_pag/final_accuracy': final_accuracy,
-                f'val_sequential_pag/initial_loss': initial_loss,
-                f'val_sequential_pag/initial_accuracy': initial_accuracy,
-                f'val_sequential_pag/loss_improvement': loss_improvement,
-                f'val_sequential_pag/accuracy_improvement': accuracy_improvement,
-                f'val_sequential_pag/iterations_completed': len(iteration_losses),
-                
-                # Standardized comparison metrics
-                'val_inverse/final_loss_sequential': final_loss,
-                'val_inverse/final_accuracy_sequential': final_accuracy,
-                'val_inverse/initial_loss_sequential': initial_loss,
-                'val_inverse/initial_accuracy_sequential': initial_accuracy,
-                'val_inverse/loss_improvement_sequential': loss_improvement,
-                'val_inverse/accuracy_improvement_sequential': accuracy_improvement,
-                
-                # Sequential-specific metrics with standardized names
-                'val_inverse/ngram_accuracy_sequential': ngram_accuracy,
-                'val_inverse/total_predictions_sequential': total_predictions,
+                # Method-specific metrics
+                f'val_inverse_{method}/ngram_accuracy': ngram_accuracy,
+                f'val_inverse_{method}/total_predictions': total_predictions,
+                f'val_inverse_{method}/final_loss': final_loss,
+                f'val_inverse_{method}/final_accuracy': final_accuracy,
+                f'val_inverse_{method}/initial_loss': initial_loss,
+                f'val_inverse_{method}/initial_accuracy': initial_accuracy,
+                f'val_inverse_{method}/loss_improvement': loss_improvement,
+                f'val_inverse_{method}/accuracy_improvement': accuracy_improvement,
+                f'val_inverse_{method}/iterations_completed': len(iteration_losses),
             }, prog_bar=False, sync_dist=True)
 
     def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
@@ -568,7 +555,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             self.constant_token_id = 0
         
         print(f"Initialized inverse validation methods: {self.inverse_init_methods}")
-        print(f"Current method: {self.current_init_method}")
         print(f"Constant token ID: {self.constant_token_id}")
 
     def compute_ngram_statistics(self, data_module):
@@ -584,10 +570,9 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
         # Fit the n-gram processor on the training data
         self.ngram_processor.fit(data_module)
         
-        # Enable sequential prediction for n-gram based initialization
-        if self.current_init_method == 'ngram_based':
-            self.use_sequential_prediction = True
-            print("Enabled sequential prediction for n-gram based initialization")
+        # Print confirmation that n-gram processor is ready
+        if 'ngram_based' in self.inverse_init_methods:
+            print("N-gram processor ready for sequential prediction in n-gram based initialization")
         
         # Print statistics
         stats = self.ngram_processor.get_statistics()
@@ -596,20 +581,18 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             if key != 'mask_values':  # Skip printing mask values as they can be long
                 print(f"  {key}: {value}")
 
-    def _get_initial_tokens(self, input_shape: torch.Size, device: torch.device, method: str = None) -> torch.Tensor:
+    def _get_initial_tokens(self, input_shape: torch.Size, device: torch.device, method: str) -> torch.Tensor:
         """
         Generate initial tokens based on the specified initialization method.
         
         Args:
             input_shape: Shape of the input tensor (batch_size, sequence_length)
             device: Device to place the tensor on
-            method: Initialization method to use. If None, uses self.current_init_method
+            method: Initialization method to use
             
         Returns:
             torch.Tensor: Initial token IDs of shape input_shape
         """
-        if method is None:
-            method = self.current_init_method
             
         if method == 'random':
             return torch.randint(0, self.model.config.vocab_size, input_shape, device=device)
