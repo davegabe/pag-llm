@@ -42,6 +42,7 @@ cd "/leonardo/home/userexternal/$USER/pag-llm"
 
 nvidia-smi
 
+export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 srun python train.py "$@"
