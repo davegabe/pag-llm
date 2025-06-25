@@ -159,7 +159,7 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
     print(f'Mean KL-divergence between original and attack Xs: {kl_div_mean:.2f} ± {kl_div_stddev:.2f}')
 
 
-@apply_config('inv-first-tiny-train')
+@apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
     """
     Main function to train the model with the Inverse First Token task.

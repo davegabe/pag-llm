@@ -465,7 +465,7 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
           f"{ansi_colored_text}")
 
 
-@apply_config('inv-first-tiny-train')
+@apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:0',
                    k_samples=30,  # How many samples to take from the dataset
