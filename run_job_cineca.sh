@@ -35,7 +35,8 @@ echo
 
 # Load necessary modules
 module load profile/deeplrn
-module load cineca-ai/4.3.0
+module load anaconda3
+activate ilm
 
 cd "/home/$USER/pag-llm"
 source .venv/bin/activate
