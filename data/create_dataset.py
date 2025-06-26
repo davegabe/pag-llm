@@ -4,7 +4,7 @@ from datasets import load_dataset, DatasetDict, concatenate_datasets
 from tokenizers import Tokenizer
 from tokenizers.models import BPE
 from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Whitespace
+from tokenizers.pre_tokenizers import Metaspace
 from tokenizers.processors import TemplateProcessing
 from transformers import PreTrainedTokenizerFast
 from huggingface_hub import login
@@ -60,7 +60,7 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
     # Step 2: Train BPE tokenizer using temporary file
     with tempfile.TemporaryDirectory() as temp_dir:
         tokenizer = Tokenizer(BPE(unk_token="<unk>"))
-        tokenizer.pre_tokenizer = Whitespace()
+        tokenizer.pre_tokenizer = Metaspace()
 
         # Define special tokens based on endoftext handling
         special_tokens = [
@@ -154,7 +154,7 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         )
 
         # Wrap in transformers-compatible tokenizer
-        tok = PreTrainedTokenizerFast(tokenizer_object=tokenizer)
+        tok = PreTrainedTokenizerFast(tokenizer_object=tokenizer, add_prefix_space=True)
         special_tokens_dict = {
             "pad_token": "<pad>",
             "unk_token": "<unk>",
