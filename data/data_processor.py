@@ -147,7 +147,8 @@ class PreTokenizedDataset(Dataset):
         dataset: Dataset,
         tokenizer: PreTrainedTokenizerFast,
         max_length: int = 512,
-        token_column: str = 'input_ids'
+        token_column: str = 'input_ids',
+        attention_mask_column: str = 'attention_mask'
     ):
         """
         Dataset class for pre-tokenized data.
@@ -157,11 +158,13 @@ class PreTokenizedDataset(Dataset):
             tokenizer (PreTrainedTokenizerFast): The tokenizer for compatibility (mainly for pad_token_id).
             max_length (int): The maximum length of the input sequences.
             token_column (str): The column name of the tokenized data.
+            attention_mask_column (str): The column name of the attention mask data.
         """
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.token_column = token_column
+        self.attention_mask_column = attention_mask_column
 
     def __len__(self):
         return len(self.dataset)
@@ -198,19 +201,34 @@ class PreTokenizedDataset(Dataset):
         if token_ids.ndim == 1:
             token_ids = token_ids.unsqueeze(0)
         
-        # Truncate or pad sequences to max_length
+        # Get attention mask from dataset if available
+        if self.attention_mask_column in items:
+            attention_mask = items[self.attention_mask_column]
+            if not isinstance(attention_mask, torch.Tensor):
+                attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+            if attention_mask.ndim == 1:
+                attention_mask = attention_mask.unsqueeze(0)
+        else:
+            # Fallback: create attention mask manually
+            pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            attention_mask = (token_ids != pad_token_id).long()
+        
+        # Ensure sequences are properly sized
         batch_size, seq_len = token_ids.shape
         if seq_len > self.max_length:
             token_ids = token_ids[:, :self.max_length]
+            attention_mask = attention_mask[:, :self.max_length]
         elif seq_len < self.max_length:
             pad_length = self.max_length - seq_len
             pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            
+            # Pad token_ids
             padding = torch.full((batch_size, pad_length), pad_token_id, dtype=torch.long)
             token_ids = torch.cat([padding, token_ids], dim=1)  # Left padding
-        
-        # Create attention mask (1 for real tokens, 0 for padding)
-        pad_token_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
-        attention_mask = (token_ids != pad_token_id).long()
+            
+            # Pad attention_mask
+            mask_padding = torch.zeros((batch_size, pad_length), dtype=torch.long)
+            attention_mask = torch.cat([mask_padding, attention_mask], dim=1)  # Left padding
         
         # For causal LM, labels are the same as input_ids, shifted by 1
         labels = token_ids.clone()
