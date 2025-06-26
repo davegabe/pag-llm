@@ -186,20 +186,31 @@ class PreTokenizedDataset(Dataset):
         items = self.dataset[indices]
         input_ids_list = items[self.input_ids_column]
         
+        # Check if attention_mask is available in the dataset
+        has_attention_mask = 'attention_mask' in items
+        attention_mask_list = items.get('attention_mask', None) if has_attention_mask else None
+        
         # Convert to tensor and handle padding/truncation
         batch_input_ids = []
         batch_attention_masks = []
         
-        for input_ids in input_ids_list:
+        for i, input_ids in enumerate(input_ids_list):
             if isinstance(input_ids, list):
                 input_ids = torch.tensor(input_ids, dtype=torch.long)
             
-            # Truncate if necessary
+            # Get attention mask from dataset if available
+            if has_attention_mask and attention_mask_list is not None:
+                attention_mask = attention_mask_list[i]
+                if isinstance(attention_mask, list):
+                    attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+            else:
+                # Fallback: create attention mask (1 for real tokens, 0 for padding)
+                attention_mask = torch.ones(len(input_ids), dtype=torch.long)
+            
+            # Truncate if necessary (both input_ids and attention_mask)
             if len(input_ids) > self.max_length:
                 input_ids = input_ids[:self.max_length]
-            
-            # Create attention mask (1 for real tokens, 0 for padding)
-            attention_mask = torch.ones(len(input_ids), dtype=torch.long)
+                attention_mask = attention_mask[:self.max_length]
             
             # Pad if necessary
             if len(input_ids) < self.max_length:
@@ -259,7 +270,8 @@ def load_and_process_dataset(
     is_pretokenized = 'input_ids' in sample_data and text_column not in sample_data
     
     if is_pretokenized:
-        print("Detected pre-tokenized dataset")
+        has_attention_mask = 'attention_mask' in sample_data
+        print(f"Detected pre-tokenized dataset with attention_mask: {has_attention_mask}")
     else:
         print("Detected text dataset, will tokenize on-the-fly")
 
