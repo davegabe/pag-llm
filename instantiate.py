@@ -90,10 +90,11 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
     config: CustomLLMPagConfig = hyper_parameters['config']
     config.dataset.__post_init__()  # Ensure dataset config is initialized properly, even when restoring an old checkpoint
 
-    # Double check that the tokenizer JSON already exists
-    vocab_size = config.model.vocab_size
-    vocab_json_file = config.model.output_dir / f'tokenizer-{vocab_size}.json'
-    assert vocab_json_file.exists(), f"Tokenizer JSON file not found: {vocab_json_file}"
+    if not current_cfg.dataset.use_pretokenized:
+        # Double check that the tokenizer JSON already exists
+        vocab_size = config.model.vocab_size
+        vocab_json_file = config.model.output_dir / f'tokenizer-{vocab_size}.json'
+        assert vocab_json_file.exists(), f"Tokenizer JSON file not found: {vocab_json_file}"
 
     # Update some parameters in the config from the environment
     config.training.device = current_cfg.training.device

@@ -175,7 +175,7 @@ def main(cfg: CustomLLMPagConfig):
         'base': 'tinystories_base__cs1bklll.ckpt',
         'bert-like': 'tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
         'inv-first': 'tinystories_inv_first_norm__9ecoqzxt.ckpt',
-        'identity-grad': 'tinystories_identity_grad_sum__1irckidh.ckpt',
+        'pag-identity-embeddings': 'identity-grad-subtr__i59u2mmc.ckpt',
     }[cfg.training.method]
     lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
         cfg.model.output_dir / ckpt_file,
@@ -198,7 +198,7 @@ def main(cfg: CustomLLMPagConfig):
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
 
-    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}_sum.json'
+    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
