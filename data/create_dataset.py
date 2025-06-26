@@ -85,9 +85,10 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
         print(f"Creating complete text file: {text_file}")
         print(f"Endoftext handling: {endoftext_handling}")
         
-        # Build corpus file without special-case logic - do splitting only at chunking time
+        # Build corpus file from all splits for robust tokenizer training
         with open(text_file, "w", encoding="utf-8") as f:
-            for item in dataset["train"]:
+            all_splits_for_tokenizer = concatenate_datasets([dataset[s] for s in dataset.keys()])
+            for item in all_splits_for_tokenizer:
                 f.write(item["text"] + "\n")
 
         # Step 2.5: Create custom splits if requested
@@ -321,22 +322,54 @@ def create_dataset(hf_path: str, config: str, vocabulary_size: int, max_seq_leng
             
             return chunks, text_chunks
 
-        # Process dataset with batched mapping for better performance using multiprocessing
-        print("Tokenizing dataset with overlapping chunks...")
-        tokenized = {}
-        for split in dataset:
-            tokenized_split = dataset[split].map(
-                chunk_overlap_batched, 
-                batched=True, 
-                batch_size=100,  # Process in batches
-                num_proc=os.cpu_count(),  # Use all available CPU cores
-                remove_columns=["text"]
-            )
+        # Process dataset, creating splits after chunking to prevent overlap
+        if custom_splits:
+            print("Processing all data together and then creating custom splits to avoid overlap.")
             
-            # No need to flatten since we return flat lists from the batched function
-            tokenized[split] = tokenized_split
-
-        tokenized_dataset = DatasetDict(tokenized)
+            # Concatenate all source data into a single dataset
+            all_data = concatenate_datasets([dataset[s] for s in dataset.keys()])
+            print(f"Concatenated all splits. Total original examples: {len(all_data)}")
+            
+            # Tokenize and chunk the entire dataset
+            all_chunks = all_data.map(
+                chunk_overlap_batched,
+                batched=True,
+                batch_size=100,
+                num_proc=os.cpu_count(),
+                remove_columns=all_data.column_names
+            )
+            print(f"Total chunks created: {len(all_chunks)}")
+            
+            # Shuffle the chunks before splitting to ensure randomness
+            all_chunks = all_chunks.shuffle(seed=42)
+            
+            # Calculate split sizes based on the number of chunks
+            total_chunks = len(all_chunks)
+            train_size = int(total_chunks * train_split)
+            test_size = int(total_chunks * test_split)
+            
+            print(f"Splitting chunks: train={train_size}, test={test_size}, eval={total_chunks - train_size - test_size}")
+            
+            # Create the splits from the chunked data
+            tokenized_dataset = DatasetDict({
+                "train": all_chunks.select(range(train_size)),
+                "test": all_chunks.select(range(train_size, train_size + test_size)),
+                "validation": all_chunks.select(range(train_size + test_size, total_chunks))
+            })
+        else:
+            # Process original splits separately
+            print(f"Using original dataset splits and processing them separately: {dataset}")
+            tokenized = {}
+            for split in dataset:
+                tokenized_split = dataset[split].map(
+                    chunk_overlap_batched, 
+                    batched=True, 
+                    batch_size=100,
+                    num_proc=os.cpu_count(),
+                    remove_columns=dataset[split].column_names
+                )
+                tokenized[split] = tokenized_split
+            tokenized_dataset = DatasetDict(tokenized)
         print(f"Tokenized dataset: {tokenized_dataset}")
 
         # Step 4: Save and push to Hugging Face Hub
