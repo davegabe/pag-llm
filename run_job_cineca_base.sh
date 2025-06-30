@@ -3,7 +3,7 @@
 ### This script is meant to be run on the Cineca EuroHPC cluster.
 ###
 
-#SBATCH --job-name=inverse_lm                 # Descriptive job name
+#SBATCH --job-name=base_lm                 # Descriptive job name
 
 #SBATCH --qos=normal                          # Quality of Service
 #SBATCH --time=1-00:00:00                     # Maximum wall time for "normal" QOS
