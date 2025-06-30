@@ -4,9 +4,9 @@ training:
   _target_: config.TrainingConfig
   learning_rate: 0.004
   batch_size: 256
-  gradient_accumulation_steps: 8
+  gradient_accumulation_steps: 4
   warmup_pretrain_epochs: 0
-  num_epochs: 5
+  num_epochs: 15
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256
