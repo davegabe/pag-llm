@@ -113,12 +113,22 @@ def create_model_and_tokenizer(
         tuple: A tuple containing the model and tokenizer.
     """
     # Check if we should use a pre-trained tokenizer
-    if dataset_cfg.use_pretokenized and dataset_cfg.pretrained_tokenizer_name:
-        print(f"Using pre-trained tokenizer: {dataset_cfg.pretrained_tokenizer_name}")
-        fast_tokenizer = AutoTokenizer.from_pretrained(
-            dataset_cfg.pretrained_tokenizer_name,
-            padding_side='left',
-        )
+    if dataset_cfg.use_pretokenized:
+        # Load tokenizer from local path or remote
+        if dataset_cfg.local_tokenizer_path:
+            print(f"Using local pre-trained tokenizer: {dataset_cfg.local_tokenizer_path}")
+            fast_tokenizer = AutoTokenizer.from_pretrained(
+                dataset_cfg.local_tokenizer_path,
+                padding_side='left',
+            )
+        elif dataset_cfg.pretrained_tokenizer_name:
+            print(f"Using remote pre-trained tokenizer: {dataset_cfg.pretrained_tokenizer_name}")
+            fast_tokenizer = AutoTokenizer.from_pretrained(
+                dataset_cfg.pretrained_tokenizer_name,
+                padding_side='left',
+            )
+        else:
+            raise ValueError("For pretokenized datasets, either 'local_tokenizer_path' or 'pretrained_tokenizer_name' must be specified")
             
         # Update vocab_size in model config to match tokenizer
         actual_vocab_size = len(fast_tokenizer)

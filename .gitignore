@@ -8,3 +8,4 @@ downloaded_dataset/
 wandb/
 *.SLURMout
 /faster-gcg/
+offline_assets/

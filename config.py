@@ -86,6 +86,10 @@ class DatasetConfig:
     use_pretokenized: bool = False
     pretokenized_dataset_name: str | None = None
     pretrained_tokenizer_name: str | None = None
+    
+    # Local dataset options (for offline usage)
+    local_dataset_path: str | None = None
+    local_tokenizer_path: str | None = None
 
     # Optional eval split
     eval_split: str | None = None # defaults to test_split if not provided

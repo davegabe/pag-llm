@@ -8,7 +8,7 @@ from typing import Generator
 
 import requests
 import torch
-from datasets import load_dataset
+from datasets import load_dataset, load_from_disk
 from torch import Tensor
 from torch.utils.data import Dataset, Subset
 from tqdm import tqdm
@@ -265,11 +265,16 @@ def load_and_process_dataset(
             test_dataset: The test dataset.
     """
     # Check if we should use pre-tokenized dataset
-    if dataset_config.use_pretokenized and dataset_config.pretokenized_dataset_name:
-        print(f"Loading pre-tokenized dataset: {dataset_config.pretokenized_dataset_name}")
-        
-        # Load the pre-tokenized dataset
-        raw_dataset = load_dataset(dataset_config.pretokenized_dataset_name)
+    if dataset_config.use_pretokenized:
+        # Determine if we should load from local path or remote
+        if dataset_config.local_dataset_path:
+            print(f"Loading pre-tokenized dataset from local path: {dataset_config.local_dataset_path}")
+            raw_dataset = load_from_disk(dataset_config.local_dataset_path)
+        elif dataset_config.pretokenized_dataset_name:
+            print(f"Loading pre-tokenized dataset from remote: {dataset_config.pretokenized_dataset_name}")
+            raw_dataset = load_dataset(dataset_config.pretokenized_dataset_name)
+        else:
+            raise ValueError("For pretokenized datasets, either 'local_dataset_path' or 'pretokenized_dataset_name' must be specified")
 
         # Create training dataset
         train_dataset = PreTokenizedDataset(
