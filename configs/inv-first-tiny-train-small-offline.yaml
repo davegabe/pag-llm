@@ -6,7 +6,7 @@ training:
   batch_size: 256
   gradient_accumulation_steps: 4
   warmup_pretrain_epochs: 0
-  num_epochs: 15
+  num_epochs: 20
   warmup_steps: 100
   weight_decay: 0.01
   max_seq_length: 256
@@ -17,7 +17,7 @@ training:
   # Hyperparameters to give different importance to parts of the loss function
   lambda_loss_ce: 1.0
   lambda_loss_pag: 0.5
-  run_evaluation_before_training: False
+  run_evaluation_before_training: True
 
 model:
   _target_: config.CustomModelConfig
