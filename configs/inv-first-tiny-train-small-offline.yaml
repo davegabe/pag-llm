@@ -56,5 +56,5 @@ dataset:
 logging:
   _target_: config.LoggingConfig
   logging_steps: 20
-  evaluation_steps: 1000
+  evaluation_steps: 200
   save_steps: 1000
