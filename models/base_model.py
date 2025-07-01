@@ -108,3 +108,6 @@ class BaseLMModel(pl.LightningModule):
 
     def validation_step(self, batch: BatchType, batch_idx: int):
         return self._step(batch, "val")
+    
+    def test_step(self, batch: BatchType, batch_idx: int):
+        return self._step(batch, "test")
