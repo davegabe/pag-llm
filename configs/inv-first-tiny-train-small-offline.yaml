@@ -40,7 +40,7 @@ dataset:
   use_pretokenized: True
   local_dataset_path: 'offline_assets/datasets/DaveGabe_TinyStoriesV2_cleaned-voc2048-seq256-overlap25'
   local_tokenizer_path: 'offline_assets/tokenizers/DaveGabe_TinyStoriesV2_cleaned-voc2048-seq256-overlap25-bpe-tokenizer'
-  local_sentence_transformer_path: 'offline_assets/sentence_transformers/all_MiniLM_L6_v2'
+  local_sentence_transformer_path: 'offline_assets/sentence_transformers/all-MiniLM-L6-v2'
 
   train_split: 'train'
   eval_split: 'validation'

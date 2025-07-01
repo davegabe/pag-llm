@@ -95,7 +95,7 @@ def download_sentence_transformer(model_name: str, output_dir: pathlib.Path) -> 
     Returns:
         Path to the downloaded model directory
     """
-    model_path = output_dir / "sentence_transformers" / model_name.replace("/", "_")
+    model_path = output_dir / "sentence_transformers" / model_name.split("/")[-1]
     model_path.mkdir(parents=True, exist_ok=True)
     
     print(f"Downloading SentenceTransformer model '{model_name}' to {model_path}")
