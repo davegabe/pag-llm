@@ -1,4 +1,5 @@
 import sys
+import argparse
 
 import torch
 from torch.nn import CrossEntropyLoss
@@ -471,14 +472,30 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:0',
-                   k_samples=30,  # How many samples to take from the dataset
-                   skip_prefix_tokens=5,  # How many tokens to skip entirely
-                   beam_size=5,
-                   prefix_len=20,  # How many tokens to predict
-                   use_init='bigram',
-                   ckpt_file='identity-grad-subtr__i59u2mmc.ckpt',
-                   baseline_ckpt_file=None,  # 'tinystories_base__cs1bklll.ckpt',
+    parser = argparse.ArgumentParser(description="Run backward inference evaluation")
+    parser.add_argument("--config", type=str, help="Configuration name to use (overrides decorator)")
+    parser.add_argument("--checkpoint", type=str, help="Path to the checkpoint file")
+    parser.add_argument("--device", type=str, default='cuda:0', help="Device to use")
+    parser.add_argument("--k-samples", type=int, default=30, help="How many samples to take from the dataset")
+    parser.add_argument("--skip-prefix-tokens", type=int, default=5, help="How many tokens to skip entirely")
+    parser.add_argument("--beam-size", type=int, default=5, help="Beam size")
+    parser.add_argument("--prefix-len", type=int, default=20, help="How many tokens to predict")
+    parser.add_argument("--use-init", type=str, default='bigram', choices=['bigram', 'random', 'pad'], help="Initialization strategy")
+    parser.add_argument("--baseline-checkpoint", type=str, help="Path to baseline checkpoint file")
+    
+    args = parser.parse_args()
+    
+    # Use checkpoint from command line if provided
+    ckpt_file = args.checkpoint if args.checkpoint else 'identity-grad-subtr__i59u2mmc.ckpt'
+    
+    run_evaluation(device=args.device,
+                   k_samples=args.k_samples,
+                   skip_prefix_tokens=args.skip_prefix_tokens,
+                   beam_size=args.beam_size,
+                   prefix_len=args.prefix_len,
+                   use_init=args.use_init,
+                   ckpt_file=ckpt_file,
+                   baseline_ckpt_file=args.baseline_checkpoint,
                    cfg=cfg)
 
 

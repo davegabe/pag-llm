@@ -1,6 +1,7 @@
 import dataclasses
 import logging
 import os
+import argparse
 from pathlib import Path
 
 import lightning as pl
@@ -134,4 +135,15 @@ def test_with_custom_checkpoint(cfg: LLMPagConfig | CustomLLMPagConfig, checkpoi
 
 
 if __name__ == "__main__":
-    test_model()
+    parser = argparse.ArgumentParser(description="Test a trained model")
+    parser.add_argument("--config", type=str, required=True, help="Configuration name to use")
+    parser.add_argument("--checkpoint", type=str, required=True, help="Path to the checkpoint file")
+    
+    args = parser.parse_args()
+    
+    # Update the default config with the specified checkpoint
+    @apply_config(args.config)
+    def test_with_args(cfg: CustomLLMPagConfig):
+        return test_with_custom_checkpoint(cfg, args.checkpoint)
+    
+    test_with_args()
