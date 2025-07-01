@@ -436,31 +436,6 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
     lightning_module.eval()
 
-    batch: BatchType = next(iter(data_module.test_dataloader())).to(torch.device(device))
-
-    input_ids, attention_mask, labels, shift_labels = batch
-    t = input_ids.size(-1)
-
-    # Take only a few samples (or all if k_samples is None)
-    if k_samples is not None:
-        input_ids, attention_mask = input_ids[:k_samples], attention_mask[:k_samples]
-        actual_samples = k_samples
-    else:
-        actual_samples = input_ids.size(0)
-
-    assert input_ids.shape == (actual_samples, t), \
-        f'input_ids shape mismatch: {input_ids.shape} != ({actual_samples}, {t})'
-    assert attention_mask.shape == (actual_samples, t), \
-        f'attention_mask shape mismatch: {attention_mask.shape} != ({actual_samples}, {t})'
-
-    # And remove a few prefix tokens
-    input_ids, attention_mask = input_ids[:, skip_prefix_tokens:], attention_mask[:, skip_prefix_tokens:]
-    t -= skip_prefix_tokens
-    assert input_ids.shape == (actual_samples, t), \
-        f'input_ids shape mismatch: {input_ids.shape} != ({actual_samples}, {t})'
-    assert attention_mask.shape == (actual_samples, t), \
-        f'attention_mask shape mismatch: {attention_mask.shape} != ({actual_samples}, {t})'
-
     # Initialize metrics tracking
     sample_metrics = []
     comprehensive_sample_metrics = []  # For new evaluation metrics
@@ -469,158 +444,200 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     total_bigram_ppl = 0.0 if use_init == 'bigram' and baseline_model is not None else None
     total_semantic_similarity = 0.0
     total_bigram_semantic_similarity = 0.0 if use_init == 'bigram' and baseline_model is not None else None
+    
+    # Global sample counter across all batches
+    global_sample_idx = 0
+    total_samples_processed = 0
+    
+    # Iterate over entire test dataset
+    for batch_idx, batch in enumerate(data_module.test_dataloader()):
+        batch = batch.to(torch.device(device))
+        input_ids, attention_mask, labels, shift_labels = batch
+        t = input_ids.size(-1)
+        batch_size = input_ids.size(0)
+        
+        # Apply k_samples limit across entire dataset, not per batch
+        remaining_samples = None
+        if k_samples is not None:
+            remaining_samples = k_samples - total_samples_processed
+            if remaining_samples <= 0:
+                break
+            if remaining_samples < batch_size:
+                input_ids = input_ids[:remaining_samples]
+                attention_mask = attention_mask[:remaining_samples]
+                batch_size = remaining_samples
+        
+        # Remove prefix tokens
+        input_ids = input_ids[:, skip_prefix_tokens:]
+        attention_mask = attention_mask[:, skip_prefix_tokens:]
+        t -= skip_prefix_tokens
+        
+        assert input_ids.shape == (batch_size, t), \
+            f'input_ids shape mismatch: {input_ids.shape} != ({batch_size}, {t})'
+        assert attention_mask.shape == (batch_size, t), \
+            f'attention_mask shape mismatch: {attention_mask.shape} != ({batch_size}, {t})'
+        
+        print(f"Processing batch {batch_idx + 1}, samples {global_sample_idx} to {global_sample_idx + batch_size - 1}")
 
-    for sample_idx, (sample_input_ids, sample_attention_mask) in enumerate(zip(input_ids, attention_mask)):
-        # Give the model the input_ids without the first prefix_len tokens and see what happens
-        suffix_input_ids = sample_input_ids[prefix_len:]
-        suffix_attention_mask = sample_attention_mask[prefix_len:]
-        assert suffix_input_ids.shape == (t - prefix_len,), \
-            f'suffix_input_ids shape mismatch: {suffix_input_ids.shape} != ({t - prefix_len},)'
-        assert suffix_attention_mask.shape == (t - prefix_len,), \
-            f'suffix_attention_mask shape mismatch: {suffix_attention_mask.shape} != ({t - prefix_len},)'
+        for local_sample_idx, (sample_input_ids, sample_attention_mask) in enumerate(zip(input_ids, attention_mask)):
+            sample_idx = global_sample_idx + local_sample_idx
+            # Give the model the input_ids without the first prefix_len tokens and see what happens
+            suffix_input_ids = sample_input_ids[prefix_len:]
+            suffix_attention_mask = sample_attention_mask[prefix_len:]
+            assert suffix_input_ids.shape == (t - prefix_len,), \
+                f'suffix_input_ids shape mismatch: {suffix_input_ids.shape} != ({t - prefix_len},)'
+            assert suffix_attention_mask.shape == (t - prefix_len,), \
+                f'suffix_attention_mask shape mismatch: {suffix_attention_mask.shape} != ({t - prefix_len},)'
 
-        suffix_tokens_len = suffix_input_ids.size(-1)
-        suffix_text = lightning_module.tokenizer.decode(suffix_input_ids, skip_special_tokens=True)
+            suffix_tokens_len = suffix_input_ids.size(-1)
+            suffix_text = lightning_module.tokenizer.decode(suffix_input_ids, skip_special_tokens=True)
 
-        # Iteratively replace the first token, in an autoregressive manner
-        while suffix_input_ids.size(-1) < t:
-            suffix_input_ids, suffix_attention_mask = backward_infer_prefix(
-                lightning_module,
-                use_init,
-                reverse_bigram,
-                suffix_input_ids,
-                suffix_attention_mask,
-                suffix_tokens_len,
-                beam_size,
-            )
-        # Since the sentences are sorted, take the first one, which is the best one
-        suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
+            # Iteratively replace the first token, in an autoregressive manner
+            while suffix_input_ids.size(-1) < t:
+                suffix_input_ids, suffix_attention_mask = backward_infer_prefix(
+                    lightning_module,
+                    use_init,
+                    reverse_bigram,
+                    suffix_input_ids,
+                    suffix_attention_mask,
+                    suffix_tokens_len,
+                    beam_size,
+                )
+            # Since the sentences are sorted, take the first one, which is the best one
+            suffix_input_ids, suffix_attention_mask = suffix_input_ids[0], suffix_attention_mask[0]
 
-        prefix_tokens_len = t - suffix_tokens_len
+            prefix_tokens_len = t - suffix_tokens_len
 
-        # Calculate metrics for this sample
-        sample_metric = {}
-        
-        # Get original prefix and suffix for comprehensive evaluation
-        original_prefix_ids = sample_input_ids[:prefix_tokens_len]
-        original_prefix_mask = sample_attention_mask[:prefix_tokens_len]
-        true_suffix_ids = sample_input_ids[prefix_tokens_len:]
-        true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
-        
-        # Get original prefix text for semantic similarity comparison
-        original_prefix_text = lightning_module.tokenizer.decode(original_prefix_ids, skip_special_tokens=True)
-        
-        # Finally, print the predicted sentence
-        predicted_stats = print_text_stats(
-            lightning_module=lightning_module,
-            input_ids=suffix_input_ids,
-            attention_mask=suffix_attention_mask,
-            prefix_tokens_len=prefix_tokens_len,
-            tag='Predicted',
-            ansi_color='36',
-        )
-        
-        # Get generated prefix for comprehensive evaluation
-        generated_prefix_ids = suffix_input_ids[:prefix_tokens_len]
-        generated_prefix_mask = suffix_attention_mask[:prefix_tokens_len]
-        
-        # Compute comprehensive evaluation metrics
-        comprehensive_metrics = evaluator.compute_comprehensive_metrics(
-            reference_prefix=original_prefix_ids,
-            generated_prefix=generated_prefix_ids,
-            true_suffix=true_suffix_ids,
-            reference_prefix_mask=original_prefix_mask,
-            generated_prefix_mask=generated_prefix_mask,
-            suffix_mask=true_suffix_mask
-        )
-        comprehensive_sample_metrics.append(comprehensive_metrics)
-        
-        # Compute semantic similarity between predicted and original prefix
-        predicted_prefix_text = predicted_stats['prefix_text']
-        semantic_sim = compute_semantic_similarity(predicted_prefix_text, original_prefix_text, semantic_model)
-        predicted_stats['semantic_similarity'] = semantic_sim
-        
-        sample_metric['predicted'] = predicted_stats
-        total_predicted_ppl += predicted_stats['overall_ppl']
-        total_semantic_similarity += semantic_sim
-
-        if use_init == 'bigram' and baseline_model is not None:
-            # Print the generated text using the reverse bigram only
-            bigram_text = backward_infer_bigram_only(
-                bigram_counts,
-                baseline_model,
-                suffix_input_ids,
-                suffix_attention_mask,
-                prefix_tokens_len,
-                beam_size,
-            )
-            bigram_stats = print_text_stats(
+            # Calculate metrics for this sample
+            sample_metric = {}
+            
+            # Get original prefix and suffix for comprehensive evaluation
+            original_prefix_ids = sample_input_ids[:prefix_tokens_len]
+            original_prefix_mask = sample_attention_mask[:prefix_tokens_len]
+            true_suffix_ids = sample_input_ids[prefix_tokens_len:]
+            true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
+            
+            # Get original prefix text for semantic similarity comparison
+            original_prefix_text = lightning_module.tokenizer.decode(original_prefix_ids, skip_special_tokens=True)
+            
+            # Finally, print the predicted sentence
+            predicted_stats = print_text_stats(
                 lightning_module=lightning_module,
-                input_ids=bigram_text,
-                attention_mask=torch.ones_like(bigram_text),
+                input_ids=suffix_input_ids,
+                attention_mask=suffix_attention_mask,
                 prefix_tokens_len=prefix_tokens_len,
-                tag='Bigram',
-                ansi_color='34',
+                tag='Predicted',
+                ansi_color='36',
             )
             
-            # Compute semantic similarity for bigram-generated prefix
-            bigram_prefix_text = bigram_stats['prefix_text']
-            bigram_semantic_sim = compute_semantic_similarity(bigram_prefix_text, original_prefix_text, semantic_model)
-            bigram_stats['semantic_similarity'] = bigram_semantic_sim
+            # Get generated prefix for comprehensive evaluation
+            generated_prefix_ids = suffix_input_ids[:prefix_tokens_len]
+            generated_prefix_mask = suffix_attention_mask[:prefix_tokens_len]
             
-            sample_metric['bigram'] = bigram_stats
-            total_bigram_ppl += bigram_stats['overall_ppl']
-            total_bigram_semantic_similarity += bigram_semantic_sim
+            # Compute comprehensive evaluation metrics
+            comprehensive_metrics = evaluator.compute_comprehensive_metrics(
+                reference_prefix=original_prefix_ids,
+                generated_prefix=generated_prefix_ids,
+                true_suffix=true_suffix_ids,
+                reference_prefix_mask=original_prefix_mask,
+                generated_prefix_mask=generated_prefix_mask,
+                suffix_mask=true_suffix_mask
+            )
+            comprehensive_sample_metrics.append(comprehensive_metrics)
+            
+            # Compute semantic similarity between predicted and original prefix
+            predicted_prefix_text = predicted_stats['prefix_text']
+            semantic_sim = compute_semantic_similarity(predicted_prefix_text, original_prefix_text, semantic_model)
+            predicted_stats['semantic_similarity'] = semantic_sim
+            
+            sample_metric['predicted'] = predicted_stats
+            total_predicted_ppl += predicted_stats['overall_ppl']
+            total_semantic_similarity += semantic_sim
 
-        original_stats = print_text_stats(
-            lightning_module=lightning_module,
-            input_ids=sample_input_ids,
-            attention_mask=sample_attention_mask,
-            prefix_tokens_len=prefix_tokens_len,
-            tag='Original',
-            ansi_color='32',
-        )
-        sample_metric['original'] = original_stats
-        total_original_ppl += original_stats['overall_ppl']
+            if use_init == 'bigram' and baseline_model is not None:
+                # Print the generated text using the reverse bigram only
+                bigram_text = backward_infer_bigram_only(
+                    bigram_counts,
+                    baseline_model,
+                    suffix_input_ids,
+                    suffix_attention_mask,
+                    prefix_tokens_len,
+                    beam_size,
+                )
+                bigram_stats = print_text_stats(
+                    lightning_module=lightning_module,
+                    input_ids=bigram_text,
+                    attention_mask=torch.ones_like(bigram_text),
+                    prefix_tokens_len=prefix_tokens_len,
+                    tag='Bigram',
+                    ansi_color='34',
+                )
+                
+                # Compute semantic similarity for bigram-generated prefix
+                bigram_prefix_text = bigram_stats['prefix_text']
+                bigram_semantic_sim = compute_semantic_similarity(bigram_prefix_text, original_prefix_text, semantic_model)
+                bigram_stats['semantic_similarity'] = bigram_semantic_sim
+                
+                sample_metric['bigram'] = bigram_stats
+                total_bigram_ppl += bigram_stats['overall_ppl']
+                total_bigram_semantic_similarity += bigram_semantic_sim
 
-        # Log sample-level metrics to WandB
-        sample_wandb_metrics = {
-            f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
-            f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
-            f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
-            f'sample_{sample_idx}/predicted_semantic_similarity': predicted_stats['semantic_similarity'],
-            f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
-            f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
-            f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
-        }
+            original_stats = print_text_stats(
+                lightning_module=lightning_module,
+                input_ids=sample_input_ids,
+                attention_mask=sample_attention_mask,
+                prefix_tokens_len=prefix_tokens_len,
+                tag='Original',
+                ansi_color='32',
+            )
+            sample_metric['original'] = original_stats
+            total_original_ppl += original_stats['overall_ppl']
+
+            # Log sample-level metrics to WandB
+            sample_wandb_metrics = {
+                f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
+                f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
+                f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
+                f'sample_{sample_idx}/predicted_semantic_similarity': predicted_stats['semantic_similarity'],
+                f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
+                f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
+                f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
+            }
+            
+            # Add comprehensive evaluation metrics
+            for metric_name, metric_value in comprehensive_metrics.items():
+                sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
+            
+            wandb_logger.experiment.log(sample_wandb_metrics)
+            
+            if use_init == 'bigram' and baseline_model is not None:
+                wandb_logger.experiment.log({
+                    f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
+                    f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
+                    f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
+                    f'sample_{sample_idx}/bigram_semantic_similarity': bigram_stats['semantic_similarity'],
+                })
+
+            sample_metrics.append(sample_metric)
+
+            # Limit the suffix text length to avoid too long lines
+            display_suffix_text_len = 150
+            display_suffix_text = suffix_text[:display_suffix_text_len] \
+                                  + ('...' if len(suffix_text) > display_suffix_text_len else '')
+
+            if sys.stdout.isatty():
+                print(f"\033[1m[...]\033[0m {display_suffix_text}")
+            else:
+                print(f"[...] {display_suffix_text}")
+
+            print()
         
-        # Add comprehensive evaluation metrics
-        for metric_name, metric_value in comprehensive_metrics.items():
-            sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
-        
-        wandb_logger.experiment.log(sample_wandb_metrics)
-        
-        if use_init == 'bigram' and baseline_model is not None:
-            wandb_logger.experiment.log({
-                f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
-                f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
-                f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
-                f'sample_{sample_idx}/bigram_semantic_similarity': bigram_stats['semantic_similarity'],
-            })
+        # Update counters at the end of each batch
+        global_sample_idx += batch_size
+        total_samples_processed += batch_size
 
-        sample_metrics.append(sample_metric)
-
-        # Limit the suffix text length to avoid too long lines
-        display_suffix_text_len = 150
-        display_suffix_text = suffix_text[:display_suffix_text_len] \
-                              + ('...' if len(suffix_text) > display_suffix_text_len else '')
-
-        if sys.stdout.isatty():
-            print(f"\033[1m[...]\033[0m {display_suffix_text}")
-        else:
-            print(f"[...] {display_suffix_text}")
-
-        print()
+    # Final count of samples processed
+    actual_samples = total_samples_processed
 
     # Log aggregate metrics to WandB
     avg_predicted_ppl = total_predicted_ppl / actual_samples

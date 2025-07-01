@@ -8,7 +8,6 @@ of generated prefixes in backward language modeling tasks.
 import torch
 from torch.nn import CrossEntropyLoss
 from typing import Dict, List, Tuple, Any
-from collections import Counter
 import numpy as np
 
 from models.base_model import BaseLMModel
@@ -74,17 +73,10 @@ class BackwardInferenceEvaluator:
         recall = len(intersection) / len(ref_set) if len(ref_set) > 0 else 0.0
         f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
         
-        # Additional statistics
-        jaccard = len(intersection) / len(ref_set.union(hyp_set)) if len(ref_set.union(hyp_set)) > 0 else 0.0
-        
         return {
             'token_precision': precision,
             'token_recall': recall, 
-            'token_f1': f1,
-            'token_jaccard': jaccard,
-            'overlap_count': len(intersection),
-            'reference_unique_tokens': len(ref_set),
-            'hypothesis_unique_tokens': len(hyp_set)
+            'token_f1': f1
         }
     
     def compute_positional_accuracy(self,
@@ -283,10 +275,7 @@ def aggregate_metrics(sample_metrics: List[Dict[str, Any]]) -> Dict[str, float]:
         if values:
             values = np.array(values)
             aggregated[f'mean_{key}'] = np.mean(values)
-            aggregated[f'std_{key}'] = np.std(values) 
-            aggregated[f'min_{key}'] = np.min(values)
-            aggregated[f'max_{key}'] = np.max(values)
-            aggregated[f'median_{key}'] = np.median(values)
+            aggregated[f'std_{key}'] = np.std(values)
     
     return aggregated
 
