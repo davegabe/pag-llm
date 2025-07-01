@@ -84,7 +84,7 @@ export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 
 echo "Running test.py with config: $CONFIG and checkpoint: $CHECKPOINT"
-srun python test.py --config "$CONFIG" --checkpoint "$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
+srun python test.py --config-name "$CONFIG" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
 
 echo "Running infer_backward_tinystories.py with config: $CONFIG and checkpoint: $CHECKPOINT"
-srun python infer_backward_tinystories.py --config "$CONFIG" --checkpoint "$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
+srun python infer_backward_tinystories.py --config-name "$CONFIG" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
