@@ -139,7 +139,7 @@ def run_evaluation(device: str, ckpt_file: str, cfg: CustomLLMPagConfig):
     output_file = cfg.model.output_dir / f'forward_lm_accuracy_{model_class_name}_{cfg.model.vocab_size}.txt'
     with output_file.open('w') as f:
         for top_k_key, correct_samples in overall_accuracy.items():
-            top_k_accuracy = correct_samples / len(data_module.val_dataset)
+            top_k_accuracy = correct_samples / len(data_module.test_dataset)
             display_string = f'{top_k_key}: {top_k_accuracy:.2%}'
             print(display_string)
             f.write(display_string)
