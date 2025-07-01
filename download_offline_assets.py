@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Script to pre-download datasets and tokenizers for offline usage on Cineca.
 This should be run before deploying to environments without internet access.
@@ -11,9 +10,8 @@ from typing import Optional
 
 from datasets import load_dataset
 from transformers import AutoTokenizer
-import hydra
+from sentence_transformers import SentenceTransformer
 from hydra import compose, initialize_config_dir
-from omegaconf import DictConfig
 
 from config import DatasetConfig
 
@@ -86,6 +84,35 @@ def download_tokenizer(tokenizer_name: str, output_dir: pathlib.Path) -> pathlib
         raise
 
 
+def download_sentence_transformer(model_name: str, output_dir: pathlib.Path) -> pathlib.Path:
+    """
+    Download a SentenceTransformer model to local directory.
+    
+    Args:
+        model_name: SentenceTransformer model name (e.g., 'sentence-transformers/all-MiniLM-L6-v2')
+        output_dir: Directory to save the model
+    
+    Returns:
+        Path to the downloaded model directory
+    """
+    model_path = output_dir / "sentence_transformers" / model_name.replace("/", "_")
+    model_path.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Downloading SentenceTransformer model '{model_name}' to {model_path}")
+    
+    try:
+        # Load and save the SentenceTransformer model
+        model = SentenceTransformer(model_name)
+        model.save(str(model_path))
+        print(f"✓ SentenceTransformer model '{model_name}' downloaded successfully")
+        
+        return model_path
+        
+    except Exception as e:
+        print(f"✗ Error downloading SentenceTransformer model '{model_name}': {e}")
+        raise
+
+
 def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     """
     Download datasets and tokenizers specified in a config file.
@@ -152,73 +179,6 @@ def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) ->
     return downloaded_assets
 
 
-def generate_offline_config(config_path: pathlib.Path, downloaded_assets: dict[str, pathlib.Path], 
-                          output_config_path: Optional[pathlib.Path] = None) -> pathlib.Path:
-    """
-    Generate a modified config file with local paths for offline usage.
-    
-    Args:
-        config_path: Original config file path
-        downloaded_assets: Dictionary of downloaded asset paths
-        output_config_path: Where to save the offline config. If None, uses original name with '-offline' suffix.
-    
-    Returns:
-        Path to the generated offline config
-    """
-    config_path = config_path.resolve()
-    
-    if output_config_path is None:
-        output_config_path = config_path.parent / f"{config_path.stem}-offline{config_path.suffix}"
-    
-    # Read the original config
-    with open(config_path, 'r') as f:
-        config_content = f.read()
-    
-    # Replace remote paths with local paths
-    if 'dataset' in downloaded_assets:
-        dataset_path = downloaded_assets['dataset']
-        # Add local_dataset_path and comment out remote dataset name
-        config_content = config_content.replace(
-            f"  use_pretokenized: True",
-            f"  use_pretokenized: True\n  local_dataset_path: '{dataset_path}'"
-        )
-        
-        # Comment out the remote dataset name to force local loading
-        if "pretokenized_dataset_name:" in config_content:
-            config_content = config_content.replace(
-                "  pretokenized_dataset_name:",
-                "  # pretokenized_dataset_name:"
-            )
-    
-    if 'tokenizer' in downloaded_assets:
-        tokenizer_path = downloaded_assets['tokenizer']
-        # Add local_tokenizer_path
-        if "local_dataset_path:" in config_content:
-            config_content = config_content.replace(
-                f"  local_dataset_path: '{downloaded_assets['dataset']}'",
-                f"  local_dataset_path: '{downloaded_assets['dataset']}'\n  local_tokenizer_path: '{tokenizer_path}'"
-            )
-        else:
-            config_content = config_content.replace(
-                f"  use_pretokenized: True",
-                f"  use_pretokenized: True\n  local_tokenizer_path: '{tokenizer_path}'"
-            )
-        
-        # Comment out the remote tokenizer name
-        if "pretrained_tokenizer_name:" in config_content:
-            config_content = config_content.replace(
-                "  pretrained_tokenizer_name:",
-                "  # pretrained_tokenizer_name:"
-            )
-    
-    # Write the offline config
-    with open(output_config_path, 'w') as f:
-        f.write(config_content)
-    
-    print(f"✓ Offline config generated: {output_config_path}")
-    return output_config_path
-
-
 def main():
     parser = argparse.ArgumentParser(description="Download datasets and tokenizers for offline usage")
     parser.add_argument("--config", type=pathlib.Path, required=True,
@@ -231,6 +191,9 @@ def main():
                         help="Download only the dataset, not the tokenizer")
     parser.add_argument("--tokenizer-only", action="store_true",
                         help="Download only the tokenizer, not the dataset")
+    parser.add_argument("--sentence-transformer", type=str, 
+                        default="sentence-transformers/all-MiniLM-L6-v2",
+                        help="SentenceTransformer model to download (default: sentence-transformers/all-MiniLM-L6-v2)")
     
     args = parser.parse_args()
     
@@ -248,6 +211,13 @@ def main():
         # Download assets based on config
         downloaded_assets = download_from_config(args.config, args.output_dir)
         
+        # Download SentenceTransformer model
+        sentence_transformer_path = download_sentence_transformer(
+            args.sentence_transformer, 
+            args.output_dir
+        )
+        downloaded_assets['sentence_transformer'] = sentence_transformer_path
+        
         if not downloaded_assets:
             print("No assets were downloaded. Check your config file.")
             return
@@ -255,16 +225,8 @@ def main():
         print("\nDownload summary:")
         for asset_type, asset_path in downloaded_assets.items():
             print(f"  {asset_type}: {asset_path}")
-        
-        # Generate offline config
-        offline_config_path = generate_offline_config(
-            args.config, 
-            downloaded_assets, 
-            args.output_config
-        )
-        
+                
         print(f"\n✓ All assets downloaded successfully!")
-        print(f"To use offline assets, use config: {offline_config_path}")
         
     except Exception as e:
         print(f"\n✗ Error during download: {e}")

@@ -1,22 +1,37 @@
 import sys
-import argparse
 import dataclasses
 from pathlib import Path
 
 import torch
 from torch.nn import CrossEntropyLoss
-import lightning as pl
 from lightning.pytorch.loggers import WandbLogger
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
-import numpy as np
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import BatchType
 from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings
-from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics, extract_prefix_suffix_from_sequence
+from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
+
+
+def load_semantic_model(cfg: CustomLLMPagConfig) -> SentenceTransformer:
+    """
+    Load SentenceTransformer model from local path if available, otherwise from HuggingFace.
+    
+    Args:
+        cfg: Configuration object containing local model path if available
+        
+    Returns:
+        SentenceTransformer: Loaded model
+    """
+    if cfg.dataset.local_sentence_transformer_path is not None:
+        print(f"Loading SentenceTransformer model from local path: {cfg.dataset.local_sentence_transformer_path}")
+        return SentenceTransformer(cfg.dataset.local_sentence_transformer_path)
+    else:
+        print("Loading SentenceTransformer model from HuggingFace: sentence-transformers/all-MiniLM-L6-v2")
+        return SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
 
 def compute_semantic_similarity(text1: str, text2: str, model: SentenceTransformer) -> float:
@@ -392,7 +407,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     
     # Initialize semantic similarity model
     print("Loading SentenceTransformer model for semantic similarity...")
-    semantic_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+    semantic_model = load_semantic_model(cfg)
     
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
