@@ -352,9 +352,9 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
     lightning_module.eval()
 
-    batch: BatchType = next(iter(data_module.val_dataloader(shuffle=True))).to(torch.device(device))
+    batch: BatchType = next(iter(data_module.test_dataloader())).to(torch.device(device))
 
-    input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
+    input_ids, attention_mask, shift_labels = batch
     t = input_ids.size(-1)
 
     # Take only a few samples
