@@ -171,14 +171,8 @@ def main(cfg: CustomLLMPagConfig):
     torch.set_float32_matmul_precision('medium')
 
     # Instantiate model and data module
-    ckpt_file = {
-        'base': 'tinystories_base__cs1bklll.ckpt',
-        'bert-like': 'tinystories_bertlike_embeddings_grad_norm__sqipem6p.ckpt',
-        'inv-first': 'tinystories_inv_first_norm__9ecoqzxt.ckpt',
-        'pag-identity-embeddings': 'identity-grad-subtr__i59u2mmc.ckpt',
-    }[cfg.training.method]
     lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
-        cfg.model.output_dir / ckpt_file,
+        cfg.model.checkpoint_path,
         cfg,
     )
 
@@ -191,10 +185,10 @@ def main(cfg: CustomLLMPagConfig):
     gcg = gcg_algorithm.GCG(
         model=lightning_model.model,
         tokenizer=lightning_model.tokenizer,
-        num_prefix_tokens=15,
-        num_steps=10_000,
-        search_width=1000,
-        top_k=64,
+        num_prefix_tokens=20, # GCG original work uses 20
+        num_steps=500, # GCG original work use 500
+        search_width=512, # GCG original work uses 512 as "batch size"
+        top_k=256, # GCG original work uses 256
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
 
