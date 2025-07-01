@@ -372,7 +372,7 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
 
 
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
-                   cfg: CustomLLMPagConfig, k_samples: int, skip_prefix_tokens: int, beam_size: int):
+                   cfg: CustomLLMPagConfig, k_samples: int | None, skip_prefix_tokens: int, beam_size: int):
     # Setup WandB logger for backward inference evaluation
     run_name = f"backward-{cfg.training.method}-{use_init}"
     tags = ["backward", cfg.training.method, cfg.dataset.name, use_init]
@@ -441,20 +441,25 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     input_ids, attention_mask, labels, shift_labels = batch
     t = input_ids.size(-1)
 
-    # Take only a few samples
-    input_ids, attention_mask = input_ids[:k_samples], attention_mask[:k_samples]
-    assert input_ids.shape == (k_samples, t), \
-        f'input_ids shape mismatch: {input_ids.shape} != ({k_samples}, {t})'
-    assert attention_mask.shape == (k_samples, t), \
-        f'attention_mask shape mismatch: {attention_mask.shape} != ({k_samples}, {t})'
+    # Take only a few samples (or all if k_samples is None)
+    if k_samples is not None:
+        input_ids, attention_mask = input_ids[:k_samples], attention_mask[:k_samples]
+        actual_samples = k_samples
+    else:
+        actual_samples = input_ids.size(0)
+
+    assert input_ids.shape == (actual_samples, t), \
+        f'input_ids shape mismatch: {input_ids.shape} != ({actual_samples}, {t})'
+    assert attention_mask.shape == (actual_samples, t), \
+        f'attention_mask shape mismatch: {attention_mask.shape} != ({actual_samples}, {t})'
 
     # And remove a few prefix tokens
     input_ids, attention_mask = input_ids[:, skip_prefix_tokens:], attention_mask[:, skip_prefix_tokens:]
     t -= skip_prefix_tokens
-    assert input_ids.shape == (k_samples, t), \
-        f'input_ids shape mismatch: {input_ids.shape} != ({k_samples}, {t})'
-    assert attention_mask.shape == (k_samples, t), \
-        f'attention_mask shape mismatch: {attention_mask.shape} != ({k_samples}, {t})'
+    assert input_ids.shape == (actual_samples, t), \
+        f'input_ids shape mismatch: {input_ids.shape} != ({actual_samples}, {t})'
+    assert attention_mask.shape == (actual_samples, t), \
+        f'attention_mask shape mismatch: {attention_mask.shape} != ({actual_samples}, {t})'
 
     # Initialize metrics tracking
     sample_metrics = []
@@ -618,9 +623,9 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         print()
 
     # Log aggregate metrics to WandB
-    avg_predicted_ppl = total_predicted_ppl / k_samples
-    avg_original_ppl = total_original_ppl / k_samples
-    avg_semantic_similarity = total_semantic_similarity / k_samples
+    avg_predicted_ppl = total_predicted_ppl / actual_samples
+    avg_original_ppl = total_original_ppl / actual_samples
+    avg_semantic_similarity = total_semantic_similarity / actual_samples
     
     # Aggregate comprehensive metrics
     aggregated_comprehensive_metrics = aggregate_metrics(comprehensive_sample_metrics)
@@ -631,14 +636,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         'avg_semantic_similarity': avg_semantic_similarity,
         'ppl_improvement': avg_original_ppl - avg_predicted_ppl,
         'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
+        'actual_samples_used': actual_samples,
     }
     
     # Add aggregated comprehensive metrics
     aggregate_final_metrics.update(aggregated_comprehensive_metrics)
     
     if total_bigram_ppl is not None:
-        avg_bigram_ppl = total_bigram_ppl / k_samples
-        avg_bigram_semantic_similarity = total_bigram_semantic_similarity / k_samples
+        avg_bigram_ppl = total_bigram_ppl / actual_samples
+        avg_bigram_semantic_similarity = total_bigram_semantic_similarity / actual_samples
         aggregate_final_metrics.update({
             'avg_bigram_overall_ppl': avg_bigram_ppl,
             'avg_bigram_semantic_similarity': avg_bigram_semantic_similarity,
@@ -650,6 +656,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     
     # Log summary
     print(f"\n=== EVALUATION SUMMARY ===")
+    print(f"Samples Used: {actual_samples}")
     print(f"Average Predicted PPL: {avg_predicted_ppl:.2f}")
     print(f"Average Original PPL: {avg_original_ppl:.2f}")
     print(f"Average Semantic Similarity: {avg_semantic_similarity:.4f}")
@@ -713,7 +720,7 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
     run_evaluation(device='cuda:0',
-                   k_samples=30,  # How many samples to take from the dataset
+                   k_samples=None,  # How many samples to take from the dataset (set to None for all samples)
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=5,
                    prefix_len=20,  # How many tokens to predict
