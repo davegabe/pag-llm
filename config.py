@@ -63,6 +63,9 @@ class CustomModelConfig:
     output_dir: pathlib.Path
     hidden_layer_index: int
 
+    # For evaluating a custom model
+    checkpoint_path: pathlib.Path | None = None  # Path to the model checkpoint if available
+
 @dataclass
 class DatasetPrefixConfig:
     min_length: int

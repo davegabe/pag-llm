@@ -44,7 +44,7 @@ def test_model(cfg: LLMPagConfig | CustomLLMPagConfig):
 
     # Load the trained model checkpoint if specified
     checkpoint_path = None
-    if hasattr(cfg.model, 'checkpoint_path') and cfg.model.checkpoint_path:
+    if cfg.model.checkpoint_path:
         checkpoint_path = cfg.model.checkpoint_path
         logger.info(f"Loading model from checkpoint: {checkpoint_path}")
         # Load from checkpoint using the class method
@@ -111,39 +111,5 @@ def test_model(cfg: LLMPagConfig | CustomLLMPagConfig):
     return test_results
 
 
-def test_with_custom_checkpoint(cfg: LLMPagConfig | CustomLLMPagConfig, checkpoint_path: str):
-    """
-    Test a model with a specific checkpoint path.
-    
-    Args:
-        cfg: Configuration object
-        checkpoint_path: Path to the checkpoint file to load
-    """
-    # Create a copy of the config to avoid modifying the original
-    import copy
-    cfg_copy = copy.deepcopy(cfg)
-    
-    # Update config with checkpoint path
-    if hasattr(cfg_copy.model, 'checkpoint_path'):
-        cfg_copy.model.checkpoint_path = checkpoint_path
-    else:
-        # Add checkpoint_path to model config if it doesn't exist
-        import dataclasses
-        cfg_copy.model = dataclasses.replace(cfg_copy.model, checkpoint_path=checkpoint_path)
-    
-    return test_model(cfg_copy)
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Test a trained model")
-    parser.add_argument("--config", type=str, required=True, help="Configuration name to use")
-    parser.add_argument("--checkpoint", type=str, required=True, help="Path to the checkpoint file")
-    
-    args = parser.parse_args()
-    
-    # Update the default config with the specified checkpoint
-    @apply_config(args.config)
-    def test_with_args(cfg: CustomLLMPagConfig):
-        return test_with_custom_checkpoint(cfg, args.checkpoint)
-    
-    test_with_args()
+    test_model()
