@@ -374,8 +374,8 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
                    cfg: CustomLLMPagConfig, k_samples: int, skip_prefix_tokens: int, beam_size: int):
     # Setup WandB logger for backward inference evaluation
-    run_name = f"BACKWARD-INFERENCE-{cfg.training.method}-{use_init}"
-    tags = ["BACKWARD-INFERENCE", cfg.training.method, cfg.dataset.name, use_init]
+    run_name = f"backward-{cfg.training.method}-{use_init}"
+    tags = ["backward", cfg.training.method, cfg.dataset.name, use_init]
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]

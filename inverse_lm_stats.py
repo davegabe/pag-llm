@@ -69,7 +69,7 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
         f'Invalid initialization strategy: {use_init}. Allowed values are: {allowed_init}'
 
     lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
-        cfg.model.output_dir / ckpt_file,
+        ckpt_file,
         cfg,
     )
     lightning_module.to(device)
