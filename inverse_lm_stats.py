@@ -22,8 +22,7 @@ def load_bigram_from_file(bigram_file: pathlib.Path) -> tuple[torch.Tensor, torc
 
     loaded_file = torch.load(str(bigram_file.resolve()), map_location='cpu')
 
-    # Use 'unigram' for backward compatibility with an older, wrong, naming convention
-    reverse_bigram = loaded_file.get('bigram') or loaded_file['unigram']
+    reverse_bigram = loaded_file.get('bigram')
     bigram_counts = loaded_file['distribution_after_token']
     return reverse_bigram, bigram_counts
 

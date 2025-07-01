@@ -16,6 +16,7 @@ from data.data_processor import BatchType
 from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings
+from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics, extract_prefix_suffix_from_sequence
 
 
 def compute_semantic_similarity(text1: str, text2: str, model: SentenceTransformer) -> float:
@@ -400,6 +401,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         ckpt_file=ckpt_file,
     )
 
+    # Initialize the comprehensive evaluator with the forward model
+    # For forward coherence, we use the same model (could use a different forward model if available)
+    evaluator = BackwardInferenceEvaluator(forward_model=lightning_module)
+
     # The baseline model is used in the bigram-only inversion.
     # This is necessary because the bigram-only inversion uses the model to compute the perplexity of the generated sentences.
     # But we have to compare it using the baseline model, not to have the side-effects of the PAG training.
@@ -418,7 +423,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
     batch: BatchType = next(iter(data_module.test_dataloader())).to(torch.device(device))
 
-    input_ids, attention_mask, shift_labels = batch
+    input_ids, attention_mask, labels, shift_labels = batch
     t = input_ids.size(-1)
 
     # Take only a few samples
@@ -438,6 +443,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
     # Initialize metrics tracking
     sample_metrics = []
+    comprehensive_sample_metrics = []  # For new evaluation metrics
     total_predicted_ppl = 0.0
     total_original_ppl = 0.0
     total_bigram_ppl = 0.0 if use_init == 'bigram' and baseline_model is not None else None
@@ -475,8 +481,13 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         # Calculate metrics for this sample
         sample_metric = {}
         
-        # Get original prefix text for semantic similarity comparison
+        # Get original prefix and suffix for comprehensive evaluation
         original_prefix_ids = sample_input_ids[:prefix_tokens_len]
+        original_prefix_mask = sample_attention_mask[:prefix_tokens_len]
+        true_suffix_ids = sample_input_ids[prefix_tokens_len:]
+        true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
+        
+        # Get original prefix text for semantic similarity comparison
         original_prefix_text = lightning_module.tokenizer.decode(original_prefix_ids, skip_special_tokens=True)
         
         # Finally, print the predicted sentence
@@ -488,6 +499,21 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             tag='Predicted',
             ansi_color='36',
         )
+        
+        # Get generated prefix for comprehensive evaluation
+        generated_prefix_ids = suffix_input_ids[:prefix_tokens_len]
+        generated_prefix_mask = suffix_attention_mask[:prefix_tokens_len]
+        
+        # Compute comprehensive evaluation metrics
+        comprehensive_metrics = evaluator.compute_comprehensive_metrics(
+            reference_prefix=original_prefix_ids,
+            generated_prefix=generated_prefix_ids,
+            true_suffix=true_suffix_ids,
+            reference_prefix_mask=original_prefix_mask,
+            generated_prefix_mask=generated_prefix_mask,
+            suffix_mask=true_suffix_mask
+        )
+        comprehensive_sample_metrics.append(comprehensive_metrics)
         
         # Compute semantic similarity between predicted and original prefix
         predicted_prefix_text = predicted_stats['prefix_text']
@@ -538,7 +564,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         total_original_ppl += original_stats['overall_ppl']
 
         # Log sample-level metrics to WandB
-        wandb_logger.experiment.log({
+        sample_wandb_metrics = {
             f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
             f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
             f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
@@ -546,7 +572,13 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
             f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
             f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
-        })
+        }
+        
+        # Add comprehensive evaluation metrics
+        for metric_name, metric_value in comprehensive_metrics.items():
+            sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
+        
+        wandb_logger.experiment.log(sample_wandb_metrics)
         
         if use_init == 'bigram' and baseline_model is not None:
             wandb_logger.experiment.log({
@@ -575,7 +607,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     avg_original_ppl = total_original_ppl / k_samples
     avg_semantic_similarity = total_semantic_similarity / k_samples
     
-    aggregate_metrics = {
+    # Aggregate comprehensive metrics
+    aggregated_comprehensive_metrics = aggregate_metrics(comprehensive_sample_metrics)
+    
+    aggregate_final_metrics = {
         'avg_predicted_overall_ppl': avg_predicted_ppl,
         'avg_original_overall_ppl': avg_original_ppl,
         'avg_semantic_similarity': avg_semantic_similarity,
@@ -583,31 +618,50 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
     }
     
+    # Add aggregated comprehensive metrics
+    aggregate_final_metrics.update(aggregated_comprehensive_metrics)
+    
     if total_bigram_ppl is not None:
         avg_bigram_ppl = total_bigram_ppl / k_samples
         avg_bigram_semantic_similarity = total_bigram_semantic_similarity / k_samples
-        aggregate_metrics.update({
+        aggregate_final_metrics.update({
             'avg_bigram_overall_ppl': avg_bigram_ppl,
             'avg_bigram_semantic_similarity': avg_bigram_semantic_similarity,
             'bigram_vs_predicted_ppl_ratio': avg_predicted_ppl / avg_bigram_ppl if avg_bigram_ppl > 0 else float('inf'),
             'semantic_similarity_improvement': avg_semantic_similarity - avg_bigram_semantic_similarity,
         })
     
-    wandb_logger.experiment.log(aggregate_metrics)
+    wandb_logger.experiment.log(aggregate_final_metrics)
     
     # Log summary
     print(f"\n=== EVALUATION SUMMARY ===")
     print(f"Average Predicted PPL: {avg_predicted_ppl:.2f}")
     print(f"Average Original PPL: {avg_original_ppl:.2f}")
     print(f"Average Semantic Similarity: {avg_semantic_similarity:.4f}")
-    print(f"PPL Improvement: {aggregate_metrics['ppl_improvement']:.2f}")
-    print(f"PPL Improvement Ratio: {aggregate_metrics['ppl_improvement_ratio']:.3f}")
+    print(f"PPL Improvement: {aggregate_final_metrics['ppl_improvement']:.2f}")
+    print(f"PPL Improvement Ratio: {aggregate_final_metrics['ppl_improvement_ratio']:.3f}")
+    
+    # Print comprehensive metrics summary
+    print(f"\n--- Token Overlap Metrics ---")
+    print(f"Mean Token Precision: {aggregated_comprehensive_metrics.get('mean_token_precision', 0.0):.4f}")
+    print(f"Mean Token Recall: {aggregated_comprehensive_metrics.get('mean_token_recall', 0.0):.4f}")
+    print(f"Mean Token F1: {aggregated_comprehensive_metrics.get('mean_token_f1', 0.0):.4f}")
+    print(f"Mean Token Jaccard: {aggregated_comprehensive_metrics.get('mean_token_jaccard', 0.0):.4f}")
+    
+    print(f"\n--- Position Accuracy Metrics ---")
+    print(f"Mean Exact Match Accuracy: {aggregated_comprehensive_metrics.get('mean_exact_match_accuracy', 0.0):.4f}")
+    print(f"Mean Positional Accuracy: {aggregated_comprehensive_metrics.get('mean_positional_accuracy', 0.0):.4f}")
+    
+    print(f"\n--- Forward Coherence Metrics ---")
+    print(f"Mean Forward Coherence PPL: {aggregated_comprehensive_metrics.get('mean_forward_coherence_ppl', float('inf')):.2f}")
+    print(f"Mean Forward Coherence Loss: {aggregated_comprehensive_metrics.get('mean_forward_coherence_loss', float('inf')):.4f}")
     
     if total_bigram_ppl is not None:
+        print(f"\n--- Bigram Baseline Comparison ---")
         print(f"Average Bigram PPL: {avg_bigram_ppl:.2f}")
         print(f"Average Bigram Semantic Similarity: {avg_bigram_semantic_similarity:.4f}")
-        print(f"Bigram vs Predicted PPL Ratio: {aggregate_metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
-        print(f"Semantic Similarity Improvement: {aggregate_metrics['semantic_similarity_improvement']:.4f}")
+        print(f"Bigram vs Predicted PPL Ratio: {aggregate_final_metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
+        print(f"Semantic Similarity Improvement: {aggregate_final_metrics['semantic_similarity_improvement']:.4f}")
     
     print(f"==========================\n")
     
@@ -657,7 +711,7 @@ def main(cfg: CustomLLMPagConfig):
     args = parser.parse_args()
     
     # Use checkpoint from command line if provided
-    ckpt_file = args.checkpoint if args.checkpoint else 'identity-grad-subtr__i59u2mmc.ckpt'
+    ckpt_file = args.checkpoint
     
     run_evaluation(device=args.device,
                    k_samples=args.k_samples,
