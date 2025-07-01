@@ -1,8 +1,12 @@
 import sys
 import argparse
+import dataclasses
+from pathlib import Path
 
 import torch
 from torch.nn import CrossEntropyLoss
+import lightning as pl
+from lightning.pytorch.loggers import WandbLogger
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import BatchType
@@ -330,6 +334,38 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
 
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
                    cfg: CustomLLMPagConfig, k_samples: int, skip_prefix_tokens: int, beam_size: int):
+    # Setup WandB logger for backward inference evaluation
+    run_name = f"backward-{cfg.training.method}-{use_init}"
+    tags = ["backward", cfg.training.method, cfg.dataset.name, use_init]
+    if cfg.training.method == "pag-hidden":
+        run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
+        tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
+
+    # Add checkpoint info to tags if available
+    if ckpt_file:
+        checkpoint_name = Path(ckpt_file).stem
+        tags.append(f"checkpoint-{checkpoint_name}")
+
+    wandb_logger = WandbLogger(
+        entity='pag-llm-team',
+        project='pag-llm-backward-inference',  # Separate project for backward inference runs
+        name=run_name,
+        tags=tags,
+        config={
+            **dataclasses.asdict(cfg),
+            'evaluation_params': {
+                'device': device,
+                'prefix_len': prefix_len,
+                'use_init': use_init,
+                'ckpt_file': ckpt_file,
+                'baseline_ckpt_file': baseline_ckpt_file,
+                'k_samples': k_samples,
+                'skip_prefix_tokens': skip_prefix_tokens,
+                'beam_size': beam_size,
+            }
+        },
+    )
+    
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
         device=device,
@@ -373,7 +409,13 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     assert attention_mask.shape == (k_samples, t), \
         f'attention_mask shape mismatch: {attention_mask.shape} != ({k_samples}, {t})'
 
-    for sample_input_ids, sample_attention_mask in zip(input_ids, attention_mask):
+    # Initialize metrics tracking
+    sample_metrics = []
+    total_predicted_ppl = 0.0
+    total_original_ppl = 0.0
+    total_bigram_ppl = 0.0 if use_init == 'bigram' and baseline_model is not None else None
+
+    for sample_idx, (sample_input_ids, sample_attention_mask) in enumerate(zip(input_ids, attention_mask)):
         # Give the model the input_ids without the first prefix_len tokens and see what happens
         suffix_input_ids = sample_input_ids[prefix_len:]
         suffix_attention_mask = sample_attention_mask[prefix_len:]
@@ -401,8 +443,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
         prefix_tokens_len = t - suffix_tokens_len
 
+        # Calculate metrics for this sample
+        sample_metric = {}
+        
         # Finally, print the predicted sentence
-        print_text_stats(
+        predicted_stats = print_text_stats(
             lightning_module=lightning_module,
             input_ids=suffix_input_ids,
             attention_mask=suffix_attention_mask,
@@ -410,6 +455,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             tag='Predicted',
             ansi_color='36',
         )
+        sample_metric['predicted'] = predicted_stats
+        total_predicted_ppl += predicted_stats['overall_ppl']
 
         if use_init == 'bigram' and baseline_model is not None:
             # Print the generated text using the reverse bigram only
@@ -421,7 +468,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 prefix_tokens_len,
                 beam_size,
             )
-            print_text_stats(
+            bigram_stats = print_text_stats(
                 lightning_module=lightning_module,
                 input_ids=bigram_text,
                 attention_mask=torch.ones_like(bigram_text),
@@ -429,8 +476,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 tag='Bigram',
                 ansi_color='34',
             )
+            sample_metric['bigram'] = bigram_stats
+            total_bigram_ppl += bigram_stats['overall_ppl']
 
-        print_text_stats(
+        original_stats = print_text_stats(
             lightning_module=lightning_module,
             input_ids=sample_input_ids,
             attention_mask=sample_attention_mask,
@@ -438,6 +487,27 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             tag='Original',
             ansi_color='32',
         )
+        sample_metric['original'] = original_stats
+        total_original_ppl += original_stats['overall_ppl']
+
+        # Log sample-level metrics to WandB
+        wandb_logger.experiment.log({
+            f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
+            f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
+            f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
+            f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
+            f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
+            f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
+        })
+        
+        if use_init == 'bigram' and baseline_model is not None:
+            wandb_logger.experiment.log({
+                f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
+                f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
+                f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
+            })
+
+        sample_metrics.append(sample_metric)
 
         # Limit the suffix text length to avoid too long lines
         display_suffix_text_len = 150
@@ -450,6 +520,42 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             print(f"[...] {display_suffix_text}")
 
         print()
+
+    # Log aggregate metrics to WandB
+    avg_predicted_ppl = total_predicted_ppl / k_samples
+    avg_original_ppl = total_original_ppl / k_samples
+    
+    aggregate_metrics = {
+        'avg_predicted_overall_ppl': avg_predicted_ppl,
+        'avg_original_overall_ppl': avg_original_ppl,
+        'ppl_improvement': avg_original_ppl - avg_predicted_ppl,
+        'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
+    }
+    
+    if total_bigram_ppl is not None:
+        avg_bigram_ppl = total_bigram_ppl / k_samples
+        aggregate_metrics.update({
+            'avg_bigram_overall_ppl': avg_bigram_ppl,
+            'bigram_vs_predicted_ppl_ratio': avg_predicted_ppl / avg_bigram_ppl if avg_bigram_ppl > 0 else float('inf'),
+        })
+    
+    wandb_logger.experiment.log(aggregate_metrics)
+    
+    # Log summary
+    print(f"\n=== EVALUATION SUMMARY ===")
+    print(f"Average Predicted PPL: {avg_predicted_ppl:.2f}")
+    print(f"Average Original PPL: {avg_original_ppl:.2f}")
+    print(f"PPL Improvement: {aggregate_metrics['ppl_improvement']:.2f}")
+    print(f"PPL Improvement Ratio: {aggregate_metrics['ppl_improvement_ratio']:.3f}")
+    
+    if total_bigram_ppl is not None:
+        print(f"Average Bigram PPL: {avg_bigram_ppl:.2f}")
+        print(f"Bigram vs Predicted PPL Ratio: {aggregate_metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
+    
+    print(f"==========================\n")
+    
+    # Finish WandB run
+    wandb_logger.experiment.finish()
 
 
 def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, attention_mask: torch.Tensor,
@@ -468,6 +574,14 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
     print(
         f"{tag:<10} [PPL - prefix: {prefix_ppl:>6.1f} / overall: {text_ppl:>6.1f}]: "  # / penalty: {token_duplications}]: "
           f"{ansi_colored_text}")
+    
+    # Return metrics for logging
+    return {
+        'prefix_ppl': prefix_ppl,
+        'overall_ppl': text_ppl,
+        'token_duplications': token_duplications,
+        'prefix_text': prefix_text
+    }
 
 
 @apply_config('inv-first-tiny-train-small')
