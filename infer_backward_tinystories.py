@@ -7,12 +7,35 @@ import torch
 from torch.nn import CrossEntropyLoss
 import lightning as pl
 from lightning.pytorch.loggers import WandbLogger
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import BatchType
 from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings
+
+
+def compute_semantic_similarity(text1: str, text2: str, model: SentenceTransformer) -> float:
+    """
+    Compute semantic similarity between two texts using SentenceTransformers.
+    
+    Args:
+        text1: First text string
+        text2: Second text string
+        model: SentenceTransformer model
+        
+    Returns:
+        float: Cosine similarity score between 0 and 1
+    """
+    if not text1.strip() or not text2.strip():
+        return 0.0
+    
+    embeddings = model.encode([text1, text2])
+    similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
+    return float(similarity)
 
 
 @torch.no_grad()
@@ -335,8 +358,8 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
                    cfg: CustomLLMPagConfig, k_samples: int, skip_prefix_tokens: int, beam_size: int):
     # Setup WandB logger for backward inference evaluation
-    run_name = f"backward-{cfg.training.method}-{use_init}"
-    tags = ["backward", cfg.training.method, cfg.dataset.name, use_init]
+    run_name = f"BACKWARD-INFERENCE-{cfg.training.method}-{use_init}"
+    tags = ["BACKWARD-INFERENCE", cfg.training.method, cfg.dataset.name, use_init]
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
@@ -365,6 +388,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             }
         },
     )
+    
+    # Initialize semantic similarity model
+    print("Loading SentenceTransformer model for semantic similarity...")
+    semantic_model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
     
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
@@ -414,6 +441,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     total_predicted_ppl = 0.0
     total_original_ppl = 0.0
     total_bigram_ppl = 0.0 if use_init == 'bigram' and baseline_model is not None else None
+    total_semantic_similarity = 0.0
+    total_bigram_semantic_similarity = 0.0 if use_init == 'bigram' and baseline_model is not None else None
 
     for sample_idx, (sample_input_ids, sample_attention_mask) in enumerate(zip(input_ids, attention_mask)):
         # Give the model the input_ids without the first prefix_len tokens and see what happens
@@ -446,6 +475,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         # Calculate metrics for this sample
         sample_metric = {}
         
+        # Get original prefix text for semantic similarity comparison
+        original_prefix_ids = sample_input_ids[:prefix_tokens_len]
+        original_prefix_text = lightning_module.tokenizer.decode(original_prefix_ids, skip_special_tokens=True)
+        
         # Finally, print the predicted sentence
         predicted_stats = print_text_stats(
             lightning_module=lightning_module,
@@ -455,8 +488,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             tag='Predicted',
             ansi_color='36',
         )
+        
+        # Compute semantic similarity between predicted and original prefix
+        predicted_prefix_text = predicted_stats['prefix_text']
+        semantic_sim = compute_semantic_similarity(predicted_prefix_text, original_prefix_text, semantic_model)
+        predicted_stats['semantic_similarity'] = semantic_sim
+        
         sample_metric['predicted'] = predicted_stats
         total_predicted_ppl += predicted_stats['overall_ppl']
+        total_semantic_similarity += semantic_sim
 
         if use_init == 'bigram' and baseline_model is not None:
             # Print the generated text using the reverse bigram only
@@ -476,8 +516,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 tag='Bigram',
                 ansi_color='34',
             )
+            
+            # Compute semantic similarity for bigram-generated prefix
+            bigram_prefix_text = bigram_stats['prefix_text']
+            bigram_semantic_sim = compute_semantic_similarity(bigram_prefix_text, original_prefix_text, semantic_model)
+            bigram_stats['semantic_similarity'] = bigram_semantic_sim
+            
             sample_metric['bigram'] = bigram_stats
             total_bigram_ppl += bigram_stats['overall_ppl']
+            total_bigram_semantic_similarity += bigram_semantic_sim
 
         original_stats = print_text_stats(
             lightning_module=lightning_module,
@@ -495,6 +542,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
             f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
             f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
+            f'sample_{sample_idx}/predicted_semantic_similarity': predicted_stats['semantic_similarity'],
             f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
             f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
             f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
@@ -505,6 +553,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
                 f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
                 f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
+                f'sample_{sample_idx}/bigram_semantic_similarity': bigram_stats['semantic_similarity'],
             })
 
         sample_metrics.append(sample_metric)
@@ -524,19 +573,24 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     # Log aggregate metrics to WandB
     avg_predicted_ppl = total_predicted_ppl / k_samples
     avg_original_ppl = total_original_ppl / k_samples
+    avg_semantic_similarity = total_semantic_similarity / k_samples
     
     aggregate_metrics = {
         'avg_predicted_overall_ppl': avg_predicted_ppl,
         'avg_original_overall_ppl': avg_original_ppl,
+        'avg_semantic_similarity': avg_semantic_similarity,
         'ppl_improvement': avg_original_ppl - avg_predicted_ppl,
         'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
     }
     
     if total_bigram_ppl is not None:
         avg_bigram_ppl = total_bigram_ppl / k_samples
+        avg_bigram_semantic_similarity = total_bigram_semantic_similarity / k_samples
         aggregate_metrics.update({
             'avg_bigram_overall_ppl': avg_bigram_ppl,
+            'avg_bigram_semantic_similarity': avg_bigram_semantic_similarity,
             'bigram_vs_predicted_ppl_ratio': avg_predicted_ppl / avg_bigram_ppl if avg_bigram_ppl > 0 else float('inf'),
+            'semantic_similarity_improvement': avg_semantic_similarity - avg_bigram_semantic_similarity,
         })
     
     wandb_logger.experiment.log(aggregate_metrics)
@@ -545,12 +599,15 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     print(f"\n=== EVALUATION SUMMARY ===")
     print(f"Average Predicted PPL: {avg_predicted_ppl:.2f}")
     print(f"Average Original PPL: {avg_original_ppl:.2f}")
+    print(f"Average Semantic Similarity: {avg_semantic_similarity:.4f}")
     print(f"PPL Improvement: {aggregate_metrics['ppl_improvement']:.2f}")
     print(f"PPL Improvement Ratio: {aggregate_metrics['ppl_improvement_ratio']:.3f}")
     
     if total_bigram_ppl is not None:
         print(f"Average Bigram PPL: {avg_bigram_ppl:.2f}")
+        print(f"Average Bigram Semantic Similarity: {avg_bigram_semantic_similarity:.4f}")
         print(f"Bigram vs Predicted PPL Ratio: {aggregate_metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
+        print(f"Semantic Similarity Improvement: {aggregate_metrics['semantic_similarity_improvement']:.4f}")
     
     print(f"==========================\n")
     

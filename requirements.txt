@@ -17,3 +17,4 @@ autoattack @ git+https://github.com/fra31/auto-attack@a392200
 scikit-learn>=1.6.1
 tokenizers>=0.21.1
 plotly>=6.0.1
+sentence-transformers>=4.1.0
