@@ -305,7 +305,7 @@ def main(cfg: CustomLLMPagConfig):
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
-        run_full_gcg_evaluation(gcg, data_module.val_dataset, gcg_output_file)
+        run_full_gcg_evaluation(gcg, data_module.test_dataset, gcg_output_file)
         
         analyze_gcg_results(lightning_model, gcg_output_file)
         
