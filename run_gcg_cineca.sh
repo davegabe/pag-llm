@@ -20,6 +20,30 @@
 
 set -eo pipefail
 
+# Parse arguments
+CHECKPOINT=""
+ADDITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --checkpoint)
+            CHECKPOINT="$2"
+            shift 2
+            ;;
+        *)
+            ADDITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$CHECKPOINT" ]]; then
+    echo "Error: --checkpoint is required"
+    echo "Usage: sbatch run_tests.sh --config <config_name> --checkpoint <checkpoint_path> [additional_args...]"
+    exit 1
+fi
+
 
 echo "Running with the following arguments:"
 echo "Job name: $SLURM_JOB_NAME"
@@ -45,4 +69,4 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python run_gcg.py training.method=pag-identity-embeddings "$@"
+srun python run_gcg.py training.method=pag-identity-embeddings +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
