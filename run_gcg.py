@@ -261,6 +261,7 @@ def main(cfg: CustomLLMPagConfig):
     # Initialize wandb
     run_name = f"gcg_attack_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     wandb.init(
+        entity="pag-llm-team",
         project="pag-llm-gcg-attacks",
         name=run_name,
         config={
