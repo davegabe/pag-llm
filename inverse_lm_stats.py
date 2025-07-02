@@ -114,7 +114,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     overall_accuracy = defaultdict(int)
     lightning_module.eval()
 
-    for batch in tqdm(data_module.val_dataloader(), desc='Inverse LM evaluation'):
+    for batch in tqdm(data_module.test_dataloader(), desc='Inverse LM evaluation'):
         batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 

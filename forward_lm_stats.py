@@ -112,7 +112,7 @@ def run_evaluation(device: str, ckpt_file: str, cfg: CustomLLMPagConfig):
     overall_accuracy = defaultdict(int)
     lightning_module.eval()
 
-    for batch in tqdm(data_module.val_dataloader(), desc='Forward LM evaluation'):
+    for batch in tqdm(data_module.test_dataloader(), desc='Forward LM evaluation'):
         batch: BatchType = batch.to(torch.device(device))
         input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
 
