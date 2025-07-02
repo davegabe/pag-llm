@@ -7,9 +7,9 @@ from torch.nn import CrossEntropyLoss
 from lightning.pytorch.loggers import WandbLogger
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
-from data.data_processor import BatchType
 from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings
@@ -437,7 +437,6 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     lightning_module.eval()
 
     # Initialize metrics tracking
-    sample_metrics = []
     comprehensive_sample_metrics = []  # For new evaluation metrics
     total_predicted_ppl = 0.0
     total_original_ppl = 0.0
@@ -450,7 +449,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     total_samples_processed = 0
     
     # Iterate over entire test dataset
-    for batch_idx, batch in enumerate(data_module.test_dataloader()):
+    total_samples = len(data_module.test_dataloader().dataset)
+    for batch_idx, batch in tqdm(enumerate(data_module.test_dataloader()), desc='Evaluating'):
         batch = batch.to(torch.device(device))
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
@@ -593,44 +593,60 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             sample_metric['original'] = original_stats
             total_original_ppl += original_stats['overall_ppl']
 
-            # Log sample-level metrics to WandB
-            sample_wandb_metrics = {
-                f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
-                f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
-                f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
-                f'sample_{sample_idx}/predicted_semantic_similarity': predicted_stats['semantic_similarity'],
-                f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
-                f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
-                f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
-            }
+            # Log sample-level metrics to WandB (only 10 samples for brevity)
+            if sample_idx % (total_samples // 10) == 0 or sample_idx == total_samples - 1:
+                sample_wandb_metrics = {
+                    f'sample_{sample_idx}/predicted_prefix_ppl': predicted_stats['prefix_ppl'],
+                    f'sample_{sample_idx}/predicted_overall_ppl': predicted_stats['overall_ppl'],
+                    f'sample_{sample_idx}/predicted_token_duplications': predicted_stats['token_duplications'],
+                    f'sample_{sample_idx}/predicted_semantic_similarity': predicted_stats['semantic_similarity'],
+                    f'sample_{sample_idx}/original_prefix_ppl': original_stats['prefix_ppl'],
+                    f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
+                    f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
+                }
             
-            # Add comprehensive evaluation metrics
-            for metric_name, metric_value in comprehensive_metrics.items():
-                sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
+                # Add comprehensive evaluation metrics
+                for metric_name, metric_value in comprehensive_metrics.items():
+                    sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
             
-            wandb_logger.experiment.log(sample_wandb_metrics)
-            
-            if use_init == 'bigram' and baseline_model is not None:
+                wandb_logger.experiment.log(sample_wandb_metrics)
+
+                # Add also log of the generated text
                 wandb_logger.experiment.log({
-                    f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
-                    f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
-                    f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
-                    f'sample_{sample_idx}/bigram_semantic_similarity': bigram_stats['semantic_similarity'],
+                    f'sample_{sample_idx}/predicted_text': predicted_stats['prefix_text'],
+                    f'sample_{sample_idx}/original_text': original_stats['prefix_text'],
+                })
+            
+                if use_init == 'bigram' and baseline_model is not None:
+                    wandb_logger.experiment.log({
+                        f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
+                        f'sample_{sample_idx}/bigram_overall_ppl': bigram_stats['overall_ppl'],
+                        f'sample_{sample_idx}/bigram_token_duplications': bigram_stats['token_duplications'],
+                        f'sample_{sample_idx}/bigram_semantic_similarity': bigram_stats['semantic_similarity'],
+                    })
+
+                    # Add bigram text log
+                    wandb_logger.experiment.log({
+                        f'sample_{sample_idx}/bigram_text': bigram_stats['prefix_text'],
+                    })
+
+                # Limit the suffix text length to avoid too long lines
+                display_suffix_text_len = 150
+                display_suffix_text = suffix_text[:display_suffix_text_len] \
+                                    + ('...' if len(suffix_text) > display_suffix_text_len else '')
+                
+                # Print the suffix text with formatting
+                if sys.stdout.isatty():
+                    print(f"\033[1m[...]\033[0m {display_suffix_text}")
+                else:
+                    print(f"[...] {display_suffix_text}")
+
+                # Add also log of the suffix text
+                wandb_logger.experiment.log({
+                    f'sample_{sample_idx}/suffix_text': suffix_text,
                 })
 
-            sample_metrics.append(sample_metric)
-
-            # Limit the suffix text length to avoid too long lines
-            display_suffix_text_len = 150
-            display_suffix_text = suffix_text[:display_suffix_text_len] \
-                                  + ('...' if len(suffix_text) > display_suffix_text_len else '')
-
-            if sys.stdout.isatty():
-                print(f"\033[1m[...]\033[0m {display_suffix_text}")
-            else:
-                print(f"[...] {display_suffix_text}")
-
-            print()
+                print()
         
         # Update counters at the end of each batch
         global_sample_idx += batch_size
