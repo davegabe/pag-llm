@@ -30,6 +30,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes  # Number of different next tokens to consider
         self.criterion = torch.nn.CrossEntropyLoss()
+        self.k_samples = 3
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
