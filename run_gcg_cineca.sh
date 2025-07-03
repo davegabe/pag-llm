@@ -14,7 +14,7 @@
 #SBATCH --cpus-per-task=1                     # Number of CPU cores per task (adjust as needed)
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
-#SBATCH --error=%x-%j.SLURMerr                # File for standard error (%x: job name, %j: job ID)
+#SBATCH --error=%x-%j.SLUMMerr                # File for standard error (%x: job name, %j: job ID)
 #SBATCH --account=euhpc_d25_096               # Project account number
 
 
@@ -22,12 +22,17 @@ set -eo pipefail
 
 # Parse arguments
 CHECKPOINT=""
+METHOD="pag-identity-embeddings" # Default method
 ADDITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --checkpoint)
             CHECKPOINT="$2"
+            shift 2
+            ;;
+        --method)
+            METHOD="$2"
             shift 2
             ;;
         *)
@@ -40,7 +45,7 @@ done
 # Validate required arguments
 if [[ -z "$CHECKPOINT" ]]; then
     echo "Error: --checkpoint is required"
-    echo "Usage: sbatch run_tests.sh --config <config_name> --checkpoint <checkpoint_path> [additional_args...]"
+    echo "Usage: sbatch run_gcg_cineca.sh --checkpoint <checkpoint_path> [--method <method_name>] [additional_args...]"
     exit 1
 fi
 
@@ -69,4 +74,4 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python run_gcg.py training.method=pag-identity-embeddings +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
+srun python run_gcg.py training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
