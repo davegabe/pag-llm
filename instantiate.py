@@ -7,6 +7,7 @@ from config import LLMPagConfig, CustomLLMPagConfig
 from data.data_module import LMDataModule
 from models.base_model import BaseLMModel
 from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
+from models.pos_identity_grad_embeddings_model import PosIdentityGradEmbeddingsModel
 from models.inv_first_token import InvFirstTokenModel
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
 
@@ -55,6 +56,8 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
         lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
     elif cfg.training.method in ("identity-grad", "pag-identity-embeddings"):
         lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
+    elif cfg.training.method in ("pos-identity-grad", "pos-pag-identity-embeddings"):
+        lightning_model = PosIdentityGradEmbeddingsModel(model, tokenizer, cfg)
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
 

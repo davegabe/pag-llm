@@ -14,6 +14,8 @@ from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings
 from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
+from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
+from models.pos_identity_grad_embeddings_model import PosIdentityGradEmbeddingsModel
 
 
 def load_semantic_model(cfg: CustomLLMPagConfig) -> SentenceTransformer:
@@ -145,7 +147,16 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, 0]
 
     # Predict the k-th token, based on the gradients of the first token embeddings
-    logits = forward_grad_embeddings(lightning_module.model, x_embed[:, 0] - grad_x_embed)
+    if type(lightning_module.model) is PosIdentityGradEmbeddingsModel:
+        # For PosIdentityGradEmbeddingsModel, we need to add the gradient to the token embedding
+        new_embed = x_embed[:, 0] + grad_x_embed
+    elif type(lightning_module.model) is IdentityGradEmbeddingsModel:
+        # For other models, we subtract the gradient from the token embedding
+        new_embed = x_embed[:, 0] - grad_x_embed
+    else:
+        raise ValueError(f'Unsupported model type: {type(lightning_module.model)}. '
+                         f'Expected PosIdentityGradEmbeddingsModel or IdentityGradEmbeddingsModel.')
+    logits = forward_grad_embeddings(lightning_module.model, new_embed)
     assert logits.shape == (batch_size, vocab_size), \
         f'logits shape mismatch: {logits.shape} != ({batch_size}, {vocab_size})'
 
