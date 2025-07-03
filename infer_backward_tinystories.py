@@ -147,10 +147,10 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, 0]
 
     # Predict the k-th token, based on the gradients of the first token embeddings
-    if type(lightning_module.model) is PosIdentityGradEmbeddingsModel:
+    if type(lightning_module) is PosIdentityGradEmbeddingsModel:
         # For PosIdentityGradEmbeddingsModel, we need to add the gradient to the token embedding
         new_embed = x_embed[:, 0] + grad_x_embed
-    elif type(lightning_module.model) is IdentityGradEmbeddingsModel:
+    elif type(lightning_module) is IdentityGradEmbeddingsModel:
         # For other models, we subtract the gradient from the token embedding
         new_embed = x_embed[:, 0] - grad_x_embed
     else:
