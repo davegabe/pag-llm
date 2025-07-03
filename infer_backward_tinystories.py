@@ -763,12 +763,21 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
+    if "inv-first" in cfg.training.method or "bert-like" in cfg.training.method or "pag-mix-identity-score-embeddings" in cfg.training.method:
+        print(f"Method {cfg.training.method} need to use PAD for initialization, ")
+        use_init = 'pad'
+    elif "identity-grad" in cfg.training.method or cfg.training.method == "base":
+        print(f"Method {cfg.training.method} need to use PAG for initialization, ")
+        use_init = 'bigram'
+    else:
+        raise ValueError(f"Unsupported training method: {cfg.training.method}. ")
+    
     run_evaluation(device='cuda:0',
                    k_samples=None,  # How many samples to take from the dataset (set to None for all samples)
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=5,
                    prefix_len=20,  # How many tokens to predict
-                   use_init='bigram',
+                   use_init=use_init,
                    ckpt_file=cfg.model.checkpoint_path,
                    baseline_ckpt_file='baseline.ckpt',
                    cfg=cfg)
