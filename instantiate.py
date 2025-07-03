@@ -10,6 +10,8 @@ from models.identity_grad_embeddings_model import IdentityGradEmbeddingsModel
 from models.pos_identity_grad_embeddings_model import PosIdentityGradEmbeddingsModel
 from models.inv_first_token import InvFirstTokenModel
 from models.masked_embeddings_grad_model import MaskedIdentityGradEmbeddingsModel
+from models.pos_inv_first_token import PosInvFirstTokenModel
+from models.pos_masked_embeddings_grad_model import PosMaskedIdentityGradEmbeddingsModel
 
 
 def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple[BaseLMModel, LMDataModule, str]:
@@ -50,14 +52,22 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     # left in the saved configuration in the corresponding .ckpt files.
     if cfg.training.method == "base":
         lightning_model = BaseLMModel('base', model, tokenizer, cfg)
+
     elif cfg.training.method in ("bert-like", "pag-mix-identity-score-embeddings"):
         lightning_model = MaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
+    elif cfg.training.method in ("pos-bert-like", "pos-pag-mix-identity-score-embeddings"):
+        lightning_model = PosMaskedIdentityGradEmbeddingsModel(model, tokenizer, cfg)
+
     elif cfg.training.method == "inv-first":
         lightning_model = InvFirstTokenModel(model, tokenizer, cfg)
+    elif cfg.training.method in "pos-inv-first":
+        lightning_model = PosInvFirstTokenModel(model, tokenizer, cfg)
+
     elif cfg.training.method in ("identity-grad", "pag-identity-embeddings"):
         lightning_model = IdentityGradEmbeddingsModel(model, tokenizer, cfg)
     elif cfg.training.method in ("pos-identity-grad", "pos-pag-identity-embeddings"):
         lightning_model = PosIdentityGradEmbeddingsModel(model, tokenizer, cfg)
+    
     else:
         raise ValueError(f"Unknown training method: {cfg.training.method}")
 

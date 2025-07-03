@@ -17,7 +17,7 @@ class PosIdentityGradEmbeddingsModel(BaseLMModel):
             model: PreTrainedModel,
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
-            model_name: str = 'identity',
+            model_name: str = 'posidentity',
             num_iterations: int = 1
     ):
         super().__init__(model_name, model, tokenizer, config)

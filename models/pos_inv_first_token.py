@@ -10,14 +10,14 @@ from models.base_model import BaseLMModel
 from models.common import forward_grad_embeddings, compute_top_k_accuracies
 
 
-class InvFirstTokenModel(BaseLMModel):
+class PosInvFirstTokenModel(BaseLMModel):
     def __init__(
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig
     ):
-        super().__init__('invfirst', model, tokenizer, config)
+        super().__init__('posinvfirst', model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
@@ -79,7 +79,7 @@ class InvFirstTokenModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
 
             # Forward pass to get the logits and probabilities
-            new_embed = x_embed[:, 0, :] - grad_x_embed[:, 0, :]
+            new_embed = x_embed[:, 0, :] + grad_x_embed[:, 0, :]
             logits = forward_grad_embeddings(self.model, new_embed)
             
             # We want that gradients on the first token will reconstruct the original token

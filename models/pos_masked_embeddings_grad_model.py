@@ -10,7 +10,7 @@ from models.base_model import BaseLMModel
 from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 
-class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
+class PosMaskedIdentityGradEmbeddingsModel(BaseLMModel):
     """
     This "masking" implies that, in a forward pass, a target token is replaced with [PAD] token.
     Then, the model is trained to predict the original token BUT on the gradients with respect to that token!
@@ -26,7 +26,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
     ):
-        super().__init__('bertlike', model, tokenizer, config)
+        super().__init__('posbertlike', model, tokenizer, config)
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes  # Number of different next tokens to consider
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -168,7 +168,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
             # Forward pass to get the logits and probabilities
             # Since we are using the gradients, we need to add the tokens we computed the gradients for ([PAD] token)
-            valid_masked_x_grads = self.tokenizer.pad_token_id - valid_masked_x_grads
+            valid_masked_x_grads = self.tokenizer.pad_token_id + valid_masked_x_grads
             valid_input_ids_predicted = forward_grad_embeddings(
                 self.model,
                 valid_masked_x_grads,
