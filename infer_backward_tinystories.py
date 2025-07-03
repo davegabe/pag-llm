@@ -158,7 +158,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         # For other models, we subtract the gradient from the token embedding
         new_embed = x_embed[:, 0] - grad_x_embed
     else:
-        raise ValueError(f'Unsupported model type: {type(lightning_module.model)}. '
+        raise ValueError(f'Unsupported model type: {type(lightning_module)}. '
                          f'Expected one of: '
                             f'PosIdentityGradEmbeddingsModel, PosMaskedIdentityGradEmbeddingsModel, '
                             f'PosInvFirstTokenModel, IdentityGradEmbeddingsModel, '
