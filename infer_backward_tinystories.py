@@ -73,7 +73,7 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
 
     Args:
         lightning_module (BaseLMModel): The model to use for inference.
-        use_init (str): The initialization strategy to use ('bigram', 'random', or 'pad').
+        use_init (str): The initialization strategy to use ('bigram', 'random', 'pad', 'bos').
         reverse_bigram (torch.Tensor): The reverse bigram tensor. Required for 'bigram' initialization.
         suffix_input_ids (torch.Tensor): The input IDs of the suffix.
         suffix_attention_mask (torch.Tensor): The attention mask of the suffix.
@@ -118,8 +118,10 @@ def backward_infer_prefix(lightning_module: BaseLMModel,
         x_input_ids[:, 0] = torch.randint_like(x_input_ids[:, 0], 0, vocab_size)
     elif use_init == 'pad':
         x_input_ids[:, 0] = lightning_module.tokenizer.pad_token_id
+    elif use_init == 'bos':
+        x_input_ids[:, 0] = lightning_module.tokenizer.bos_token_id
     else:
-        raise ValueError(f'Invalid initialization strategy: {use_init}. Allowed values are: bigram, random, pad')
+        raise ValueError(f'Invalid initialization strategy: {use_init}. Allowed values are: bigram, random, pad, bos')
 
     x_attention_mask = torch.cat([
         torch.ones_like(suffix_attention_mask[:, :1]),
@@ -770,7 +772,10 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
-    if "inv-first" in cfg.training.method or "bert-like" in cfg.training.method or "pag-mix-identity-score-embeddings" in cfg.training.method:
+    if "inv-first" in cfg.training.method:
+        print(f"Method {cfg.training.method} need to use BOS for initialization, ")
+        use_init = 'bos'
+    elif  "bert-like" in cfg.training.method or "pag-mix-identity-score-embeddings" in cfg.training.method:
         print(f"Method {cfg.training.method} need to use PAD for initialization, ")
         use_init = 'pad'
     elif "identity-grad" in cfg.training.method or cfg.training.method == "base":

@@ -53,7 +53,7 @@ class InvFirstTokenModel(BaseLMModel):
         attention_mask = batch.attention_mask
 
         # Mask the first token in input_ids
-        input_ids[:, 0] = self.tokenizer.pad_token_id
+        input_ids[:, 0] = self.tokenizer.bos_token_id
 
         # Get the embeddings of X
         x_embed = self.model.get_input_embeddings()(input_ids)
@@ -72,7 +72,7 @@ class InvFirstTokenModel(BaseLMModel):
 
         # Calculate gradient-based loss if we're past the warmup period
         if self.current_epoch >= self.warmup_pretrain_epochs:
-            # Get the embedding of the first real token (not [PAD])
+            # Get the embedding of the first real token (not <s>)
             inv_first_label = batch.labels[:, 0].clone()
 
             # Get the gradients on the first token
@@ -140,13 +140,25 @@ class InvFirstTokenModel(BaseLMModel):
             # Calculate perplexity
             perplexity = torch.exp(loss_ce)
             self.log_dict({
-                'val/loss_ce': loss_ce,
-                'val/loss_first_inv': loss_grads,
-                'val/perplexity': perplexity,
-                'val/loss': loss,
+                f'{prefix_tag}/loss_ce': loss_ce,
+                f'{prefix_tag}/loss_first_inv': loss_grads,
+                f'{prefix_tag}/perplexity': perplexity,
+                f'{prefix_tag}/loss': loss,
             }, prog_bar=True, sync_dist=True)
 
         # Ensure that the model has no gradients
         self.model.zero_grad()
         
         return loss
+
+    def test_step(self, batch: BatchType, batch_idx: int, prefix_tag: str = 'test') -> torch.Tensor:
+        """
+        Compute the test loss and perplexity on the forward pass.
+        Compute also the accuracy of the Inverse First Token task.
+
+        Args:
+            prefix_tag: Tag prefix
+            batch (BatchType): The batch of data.
+            batch_idx (int): The index of the batch.
+        """
+        return self.validation_step(batch, batch_idx, prefix_tag)

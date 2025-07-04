@@ -65,7 +65,7 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
     torch.set_float32_matmul_precision('medium')
 
     # Decide the strategy for the init
-    allowed_init = {'bigram', 'random', 'pad'}
+    allowed_init = {'bigram', 'random', 'pad', 'bos'}
     assert use_init in allowed_init, \
         f'Invalid initialization strategy: {use_init}. Allowed values are: {allowed_init}'
 
@@ -93,8 +93,10 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
                                                               cfg.model.vocab_size, train_bigram_file)
     reverse_bigram, bigram_counts = map(lambda x: x.to(device), (reverse_bigram, bigram_counts))
 
-    # To always use PAD token as the filler for the unknown token:
-    if use_init == 'pad':
+    # To always use special token as the filler for the unknown token:
+    if use_init == 'bos':
+        reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.bos_token_id)
+    elif use_init == 'pad':
         reverse_bigram = torch.full_like(reverse_bigram, lightning_module.tokenizer.pad_token_id)
 
     return lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts
