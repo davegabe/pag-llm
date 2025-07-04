@@ -14,7 +14,7 @@
 #SBATCH --cpus-per-task=1                     # Number of CPU cores per task (adjust as needed)
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
-#SBATCH --error=%x-%j.SLUMMerr                # File for standard error (%x: job name, %j: job ID)
+#SBATCH --error=%x-%j.SLURMerr                # File for standard error (%x: job name, %j: job ID)
 #SBATCH --account=euhpc_d25_096               # Project account number
 
 
