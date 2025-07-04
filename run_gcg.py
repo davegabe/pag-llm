@@ -7,6 +7,7 @@ from datetime import datetime
 import torch
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
+from tqdm import tqdm
 import wandb
 
 from config import CustomLLMPagConfig, apply_config
@@ -277,6 +278,7 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
                                      log_intervals: list[int]):
     """
     Run GCG evaluation with intermediate logging at specified step intervals.
+    This runs GCG once for the maximum steps and collects results at intermediate intervals.
     
     Args:
         gcg: GCG algorithm instance
@@ -301,55 +303,31 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
     # Set random seed for reproducibility
     torch.manual_seed(42)
     
-    # Run multiple evaluations with different step limits to simulate convergence
-    all_results = {}
-    
-    for interval in log_intervals:
-        print(f"\nRunning GCG evaluation for {interval} steps...")
-        
-        # Create a modified GCG instance for this interval
-        gcg_interval = gcg_algorithm.GCG(
-            model=gcg.model,
-            tokenizer=gcg.tokenizer,
-            num_prefix_tokens=gcg.num_prefix_tokens,
-            num_steps=interval,
-            search_width=gcg.search_width,
-            top_k=gcg.top_k,
-        )
-        
-        # Reset random seed for consistency
-        torch.manual_seed(42)
-        
-        # Run evaluation for this interval
-        interval_results = gcg_evaluation.evaluate_model_with_gcg(
-            gcg_interval, 
-            dataset,
-            target_response_len=10,
-            max_samples_to_attack=2_000,
-            random_select_samples=True
-        )
-        
-        all_results[interval] = interval_results
-        
-        # Log convergence metrics for this interval
-        log_convergence_metrics(interval_results, interval)
+    # Run single evaluation with intermediate logging
+    gcg_results = evaluate_model_with_gcg_convergence(
+        gcg, 
+        dataset,
+        target_response_len=10,
+        max_samples_to_attack=2_000,
+        random_select_samples=True,
+        log_intervals=log_intervals
+    )
     
     evaluation_time = time.time() - start_time
     
     # Log evaluation time and basic stats
     wandb.log({
         "evaluation/total_time": evaluation_time,
-        "evaluation/samples_attacked": len(all_results[max(log_intervals)]),
-        "evaluation/avg_time_per_sample": evaluation_time / len(all_results[max(log_intervals)]) if all_results[max(log_intervals)] else 0
+        "evaluation/samples_attacked": len(gcg_results),
+        "evaluation/avg_time_per_sample": evaluation_time / len(gcg_results) if gcg_results else 0
     })
     
-    # Save final results (from the highest interval)
-    final_results = all_results[max(log_intervals)]
+    # Save final results
     with gcg_output_file.open('w') as f:
-        json.dump([r.to_dict() for r in final_results], f, indent=4)
+        json.dump([r.to_dict() for r in gcg_results], f, indent=4)
     print(f"Saved GCG results to {gcg_output_file}")
     
-    return final_results
+    return gcg_results
 
 
 def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_interval: int):
@@ -428,6 +406,109 @@ def create_convergence_chart(log_intervals: list[int]):
                 title="GCG Convergence Analysis"
             )
         })
+
+
+def evaluate_model_with_gcg_convergence(gcg: gcg_algorithm.GCG,
+                                       dataset: TextDataset,
+                                       target_response_len: int,
+                                       random_select_samples: bool = True,
+                                       max_samples_to_attack: int | None = None,
+                                       log_intervals: list[int] = None) -> list[gcg_evaluation.GCGResult]:
+    """
+    Run GCG evaluation with intermediate convergence logging.
+    This function runs GCG once per sample and logs metrics at specified intervals.
+    
+    Args:
+        gcg: GCG object
+        dataset: Dataset to evaluate on
+        target_response_len: Length of the target attack response we want to generate
+        random_select_samples: Whether to randomly select samples from the dataset or not
+        max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
+        log_intervals: List of step intervals to log metrics at
+        
+    Returns:
+        List of GCGResult objects from the final evaluation
+    """
+    from gcg import gcg_utils
+    
+    gcg_utils.set_seeds()
+    prefix_len = gcg.num_prefix_tokens
+
+    max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
+    max_samples_to_attack = min(max_samples_to_attack, len(dataset))
+
+    samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist() \
+        if random_select_samples \
+        else list(range(max_samples_to_attack))
+
+    # Storage for intermediate results at each interval
+    interval_results = {interval: [] for interval in log_intervals}
+    final_results = []
+
+    # Iterate through the dataset and attack each example
+    for sample_idx in tqdm(samples_to_attack, desc="Evaluating with GCG"):
+        item = dataset[sample_idx]
+        input_ids = item.input_ids[item.attention_mask == 1]
+        if input_ids.size(-1) <= prefix_len + target_response_len:
+            # Skip if the target response is too short
+            continue
+
+        # Split into prefix and target response
+        original_prefix_ids = input_ids[:prefix_len]
+        target_response_ids = input_ids[prefix_len:prefix_len + target_response_len]
+        target_response_str = gcg.tokenizer.decode(target_response_ids)
+
+        # Storage for intermediate attack states
+        intermediate_states = {}
+        
+        # Custom callback to capture intermediate states
+        def capture_intermediate_state(step: int, x_attack_str: str, y_attack_response: str):
+            if step in log_intervals:
+                intermediate_states[step] = {
+                    'x_attack_str': x_attack_str,
+                    'y_attack_response': y_attack_response
+                }
+
+        # Run the attack with intermediate logging
+        x_attack_str, y_attack_response, steps = gcg.run(
+            target_response_str, 
+            show_progress=False,
+            evaluate_every_n_steps=1,  # Check every step for intervals
+            intermediate_callback=capture_intermediate_state
+        )
+        
+        # Process intermediate results
+        for interval in log_intervals:
+            if interval in intermediate_states:
+                state = intermediate_states[interval]
+                y_attack_response_ids = gcg.tokenizer.encode(state['y_attack_response'], return_tensors='pt')[0]
+                
+                interval_result = gcg_evaluation.GCGResult(
+                    original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
+                    target_response_ids=target_response_ids.detach().cpu().tolist(),
+                    x_attack_str=state['x_attack_str'],
+                    y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
+                    steps=interval,
+                )
+                interval_results[interval].append(interval_result)
+        
+        # Store final result
+        y_attack_response_ids = gcg.tokenizer.encode(y_attack_response, return_tensors='pt')[0]
+        final_results.append(gcg_evaluation.GCGResult(
+            original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
+            target_response_ids=target_response_ids.detach().cpu().tolist(),
+            x_attack_str=x_attack_str,
+            y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
+            steps=steps,
+        ))
+
+    # Log metrics for each interval
+    for interval in log_intervals:
+        if interval_results[interval]:
+            print(f"\nLogging metrics for {interval} steps...")
+            log_convergence_metrics(interval_results[interval], interval)
+
+    return final_results
 
 
 @apply_config('inv-first-tiny-train-small')

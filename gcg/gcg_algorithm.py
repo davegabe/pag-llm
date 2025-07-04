@@ -29,7 +29,8 @@ class GCG:
         self.top_k = top_k
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
-            stop_after_same_loss_steps: int | None = 10, show_progress: bool = True) -> tuple[str, str, int]:
+            stop_after_same_loss_steps: int | None = 10, show_progress: bool = True,
+            intermediate_callback: callable = None) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -40,6 +41,8 @@ class GCG:
             stop_after_same_loss_steps: Number of steps to run with the same GCG loss value before stopping the attack.
                                          If None, no early stopping is performed.
             show_progress: Whether to show a progress bar during the attack.
+            intermediate_callback: Optional callback function to call at intermediate steps.
+                                 Called with (step, x_attack_str, y_attack_response).
 
         Returns:
             x_attack_str: The final attack prompt.
@@ -76,6 +79,11 @@ class GCG:
                 tqdm.write(f'Step: {step}')
                 tqdm.write(f'\tAttack: "{x_attack_str}"')
                 tqdm.write(f'\tLLM Response (loss: {loss.item():.3f}): "{y_attack_response}"\n')
+
+            # Call intermediate callback if provided
+            if intermediate_callback is not None:
+                x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+                intermediate_callback(step, x_attack_str, y_attack_response)
 
         x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
         return x_attack_str, y_attack_response, step
