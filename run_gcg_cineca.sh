@@ -21,12 +21,17 @@
 set -eo pipefail
 
 # Parse arguments
+CONFIG=""
 CHECKPOINT=""
 METHOD="pag-identity-embeddings" # Default method
 ADDITIONAL_ARGS=()
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --config)
+            CONFIG="$2"
+            shift 2
+            ;;
         --checkpoint)
             CHECKPOINT="$2"
             shift 2
@@ -43,9 +48,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Validate required arguments
+if [[ -z "$CONFIG" ]]; then
+    echo "Error: --config is required"
+    echo "Usage: sbatch run_gcg_cineca.sh --config <config_name> --checkpoint <checkpoint_path> [--method <method_name>] [additional_args...]"
+    exit 1
+fi
+
 if [[ -z "$CHECKPOINT" ]]; then
     echo "Error: --checkpoint is required"
-    echo "Usage: sbatch run_gcg_cineca.sh --checkpoint <checkpoint_path> [--method <method_name>] [additional_args...]"
+    echo "Usage: sbatch run_gcg_cineca.sh --config <config_name> --checkpoint <checkpoint_path> [--method <method_name>] [additional_args...]"
     exit 1
 fi
 
@@ -54,9 +65,12 @@ echo "Running with the following arguments:"
 echo "Job name: $SLURM_JOB_NAME"
 echo "Job ID: $SLURM_JOB_ID"
 echo "Git commit: $(git rev-parse HEAD)"
+echo "Config: $CONFIG"
+echo "Checkpoint: $CHECKPOINT"
+echo "Method: $METHOD"
 echo
-echo "User specified arguments:"
-printf '%s\n' "$@"
+echo "Additional arguments:"
+printf '%s\n' "${ADDITIONAL_ARGS[@]}"
 echo
 echo "========================="
 echo
@@ -74,4 +88,4 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python run_gcg.py "${ADDITIONAL_ARGS[@]}" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT"
+srun python run_gcg.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
