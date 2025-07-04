@@ -152,6 +152,8 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
                                                                 shift_labels=shift_labels,
                                                                 output_hidden_states=False)
             assert masked_x_embed.requires_grad
+            masked_outputs.requires_grad_(True)
+            assert masked_outputs.loss.requires_grad
             masked_x_grads = torch.autograd.grad(masked_outputs.loss,
                                                  [masked_x_embed],
                                                  create_graph=create_graph)[0]
