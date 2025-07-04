@@ -6,6 +6,7 @@ from datetime import datetime
 
 import torch
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pad_sequence
 import wandb
 
 from config import CustomLLMPagConfig, apply_config
@@ -121,16 +122,30 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
     for start_i in range(0, len(gcg_results), batch_size):
         end_i = min(start_i + batch_size, len(gcg_results))
         batch = gcg_results[start_i:end_i]
-
-        original_prefix_ids = torch.tensor([result.original_prefix_ids for result in batch], device=llm.device)
-        target_response_ids = torch.tensor([result.target_response_ids for result in batch], device=llm.device)
-        y_attack_response_ids = torch.tensor([result.y_attack_response_ids for result in batch], device=llm.device)
+        
+        # Handle tokenizers that might not have a pad token
+        pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        
+        original_prefix_ids = pad_sequence([torch.tensor(result.original_prefix_ids) for result in batch], 
+                                         batch_first=True, padding_value=pad_token_id).to(llm.device)
+        target_response_ids = pad_sequence([torch.tensor(result.target_response_ids) for result in batch], 
+                                         batch_first=True, padding_value=pad_token_id).to(llm.device)
+        y_attack_response_ids = pad_sequence([torch.tensor(result.y_attack_response_ids) for result in batch], 
+                                           batch_first=True, padding_value=pad_token_id).to(llm.device)
         x_attack_ids = tokenizer.batch_encode_plus([result.x_attack_str for result in batch],
-                                                   return_tensors='pt')['input_ids'].to(llm.device)
+                                                   return_tensors='pt', padding=True)['input_ids'].to(llm.device)
 
         prefix_len = original_prefix_ids.size(1)
-        batch_size, suffix_len = y_attack_response_ids.shape
+        batch_size_actual, max_suffix_len = y_attack_response_ids.shape
         vocab_size = tokenizer.vocab_size
+        
+        # Create attention masks for variable length sequences
+        target_lengths = torch.tensor([len(result.target_response_ids) for result in batch], device=llm.device)
+        attack_lengths = torch.tensor([len(result.y_attack_response_ids) for result in batch], device=llm.device)
+        
+        # Create masks for valid positions (non-padded)
+        target_mask = torch.arange(max_suffix_len, device=llm.device).unsqueeze(0) < target_lengths.unsqueeze(1)
+        attack_mask = torch.arange(max_suffix_len, device=llm.device).unsqueeze(0) < attack_lengths.unsqueeze(1)
 
         @torch.no_grad()
         def _compute_y_logits(x: torch.Tensor) -> torch.Tensor:
@@ -152,32 +167,40 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
             # Extract only the logits that should predict the target response
             return logits[:, prefix_len - 1:-1, :]
 
-        def _compute_logits_ce_loss(logits: torch.Tensor) -> torch.Tensor:
-            nonlocal target_response_ids, vocab_size, batch_size, suffix_len
-            # Compute the cross-entropy loss for the every sample in the batch
-            return F.cross_entropy(
+        def _compute_logits_ce_loss(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+            nonlocal target_response_ids, vocab_size, batch_size_actual, max_suffix_len
+            # Compute the cross-entropy loss for every sample in the batch, considering only valid (non-padded) positions
+            ce_loss = F.cross_entropy(
                 logits.reshape(-1, vocab_size),
                 target_response_ids.view(-1),
                 reduction='none',
-            ).view(batch_size, suffix_len).mean(dim=-1)
+            ).view(batch_size_actual, max_suffix_len)
+            
+            # Apply mask to ignore padded positions and compute mean only over valid positions
+            masked_loss = ce_loss * mask.float()
+            return masked_loss.sum(dim=-1) / mask.sum(dim=-1).clamp(min=1)  # Avoid division by zero
 
         with torch.no_grad():
             # Compute the forward pass for the original and attack prefixes
             original_logits = _compute_y_logits(original_prefix_ids)
             attack_logits = _compute_y_logits(x_attack_ids)
 
-            # Compute the CE-loss for both
-            overall_original_loss.append(_compute_logits_ce_loss(original_logits))
-            overall_attack_loss.append(_compute_logits_ce_loss(attack_logits))
+            # Compute the CE-loss for both, using appropriate masks
+            overall_original_loss.append(_compute_logits_ce_loss(original_logits, target_mask))
+            overall_attack_loss.append(_compute_logits_ce_loss(attack_logits, target_mask))
 
-            # Compute the KL-divergence between the two
+            # Compute the KL-divergence between the two, considering only valid positions
             kl_div = F.kl_div(
                 attack_logits.reshape(-1, vocab_size).log_softmax(dim=-1),
                 original_logits.reshape(-1, vocab_size).log_softmax(dim=-1),
                 reduction='none',
                 log_target=True,
-            ).sum(dim=-1).view(batch_size, suffix_len).mean(dim=-1)
-            overall_kl_div.append(kl_div)
+            ).sum(dim=-1).view(batch_size_actual, max_suffix_len)
+            
+            # Apply mask and compute mean over valid positions
+            masked_kl_div = kl_div * target_mask.float()
+            kl_div_mean_per_sample = masked_kl_div.sum(dim=-1) / target_mask.sum(dim=-1).clamp(min=1)
+            overall_kl_div.append(kl_div_mean_per_sample)
 
     # Compute the mean of the losses
     original_loss = torch.cat(overall_original_loss)
