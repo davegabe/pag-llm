@@ -272,6 +272,164 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
         wandb.log({"results_summary": results_summary})
 
 
+def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDataset, 
+                                     gcg_output_file: pathlib.Path, 
+                                     log_intervals: list[int]):
+    """
+    Run GCG evaluation with intermediate logging at specified step intervals.
+    
+    Args:
+        gcg: GCG algorithm instance
+        dataset: Dataset to evaluate on
+        gcg_output_file: Path to save final results
+        log_intervals: List of step intervals to log metrics at (should be 3 intervals)
+    """
+    print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
+    
+    # Log GCG configuration
+    wandb.log({
+        "gcg_config/num_prefix_tokens": gcg.num_prefix_tokens,
+        "gcg_config/num_steps": gcg.num_steps,
+        "gcg_config/search_width": gcg.search_width,
+        "gcg_config/top_k": gcg.top_k,
+        "gcg_config/device": str(gcg.device),
+        "gcg_config/dataset_size": len(dataset),
+        "gcg_config/log_intervals": log_intervals
+    })
+    
+    start_time = time.time()
+    # Set random seed for reproducibility
+    torch.manual_seed(42)
+    
+    # Run multiple evaluations with different step limits to simulate convergence
+    all_results = {}
+    
+    for interval in log_intervals:
+        print(f"\nRunning GCG evaluation for {interval} steps...")
+        
+        # Create a modified GCG instance for this interval
+        gcg_interval = gcg_algorithm.GCG(
+            model=gcg.model,
+            tokenizer=gcg.tokenizer,
+            num_prefix_tokens=gcg.num_prefix_tokens,
+            num_steps=interval,
+            search_width=gcg.search_width,
+            top_k=gcg.top_k,
+        )
+        
+        # Reset random seed for consistency
+        torch.manual_seed(42)
+        
+        # Run evaluation for this interval
+        interval_results = gcg_evaluation.evaluate_model_with_gcg(
+            gcg_interval, 
+            dataset,
+            target_response_len=10,
+            max_samples_to_attack=2_000,
+            random_select_samples=True
+        )
+        
+        all_results[interval] = interval_results
+        
+        # Log convergence metrics for this interval
+        log_convergence_metrics(interval_results, interval)
+    
+    evaluation_time = time.time() - start_time
+    
+    # Log evaluation time and basic stats
+    wandb.log({
+        "evaluation/total_time": evaluation_time,
+        "evaluation/samples_attacked": len(all_results[max(log_intervals)]),
+        "evaluation/avg_time_per_sample": evaluation_time / len(all_results[max(log_intervals)]) if all_results[max(log_intervals)] else 0
+    })
+    
+    # Save final results (from the highest interval)
+    final_results = all_results[max(log_intervals)]
+    with gcg_output_file.open('w') as f:
+        json.dump([r.to_dict() for r in final_results], f, indent=4)
+    print(f"Saved GCG results to {gcg_output_file}")
+    
+    return final_results
+
+
+def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_interval: int):
+    """Log convergence metrics for a specific step interval."""
+    # Compute success rate
+    num_successful_tokens = sum(
+        result.get_success_tokens()
+        for result in gcg_results
+    )
+    num_total_tokens = sum(
+        min(len(result.target_response_ids), len(result.y_attack_response_ids))
+        for result in gcg_results
+    )
+    token_success_rate = num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0
+    
+    # Compute sample-level success rate (at least 2 successful tokens)
+    successful_samples = [r for r in gcg_results if r.get_success_tokens() >= 2]
+    sample_success_rate = len(successful_samples) / len(gcg_results) if gcg_results else 0
+    
+    # Log metrics with step interval prefix
+    prefix = f"convergence_{step_interval}steps"
+    wandb.log({
+        f"{prefix}/token_success_rate": token_success_rate,
+        f"{prefix}/sample_success_rate": sample_success_rate,
+        f"{prefix}/successful_tokens": num_successful_tokens,
+        f"{prefix}/total_tokens": num_total_tokens,
+        f"{prefix}/successful_samples": len(successful_samples),
+        f"{prefix}/total_samples": len(gcg_results),
+        f"{prefix}/steps": step_interval
+    })
+    
+    print(f"Step {step_interval}: Token success rate: {token_success_rate:.2%}, "
+          f"Sample success rate: {sample_success_rate:.2%}")
+
+
+def create_convergence_chart(log_intervals: list[int]):
+    """Create a convergence chart showing success rates over steps."""
+    if wandb.run is not None:
+        # Prepare data for convergence chart
+        steps = []
+        token_success_rates = []
+        sample_success_rates = []
+        
+        for interval in log_intervals:
+            steps.append(interval)
+            # Get metrics from wandb logs
+            try:
+                token_rate = wandb.run.summary.get(f"convergence_{interval}steps/token_success_rate", 0)
+                sample_rate = wandb.run.summary.get(f"convergence_{interval}steps/sample_success_rate", 0)
+                token_success_rates.append(token_rate)
+                sample_success_rates.append(sample_rate)
+            except:
+                token_success_rates.append(0)
+                sample_success_rates.append(0)
+        
+        # Create convergence table
+        convergence_data = []
+        for i, step in enumerate(steps):
+            convergence_data.append([
+                step,
+                f"{token_success_rates[i]:.4f}",
+                f"{sample_success_rates[i]:.4f}"
+            ])
+        
+        convergence_table = wandb.Table(
+            columns=["Steps", "Token Success Rate", "Sample Success Rate"],
+            data=convergence_data
+        )
+        
+        wandb.log({
+            "convergence_analysis": convergence_table,
+            "convergence_chart": wandb.plot.line(
+                convergence_table, 
+                "Steps", 
+                "Token Success Rate",
+                title="GCG Convergence Analysis"
+            )
+        })
+
+
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
     """
@@ -317,11 +475,12 @@ def main(cfg: CustomLLMPagConfig):
     })
 
     # Run GCG
+    num_steps = 1500
     gcg = gcg_algorithm.GCG(
         model=lightning_model.model,
         tokenizer=lightning_model.tokenizer,
         num_prefix_tokens=20, # GCG original work uses 20
-        num_steps=500, # GCG original work use 500
+        num_steps=num_steps, # Extended to num_steps for convergence analysis
         search_width=512, # GCG original work uses 512 as "batch size"
         top_k=256, # GCG original work uses 256
     )
@@ -331,15 +490,28 @@ def main(cfg: CustomLLMPagConfig):
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
-        run_full_gcg_evaluation(gcg, data_module.test_dataset, gcg_output_file)
+        # Create 3 intervals based on num_steps (1/3, 2/3, and full num_steps)
+        log_intervals = [num_steps // 3, 2 * num_steps // 3, num_steps]
+        print(f"Running GCG evaluation with convergence logging at steps: {log_intervals}")
         
+        gcg_results = run_gcg_with_convergence_logging(
+            gcg, 
+            data_module.test_dataset, 
+            gcg_output_file, 
+            log_intervals=log_intervals
+        )
+        
+        # Create convergence analysis chart
+        create_convergence_chart(log_intervals)
+        
+        # Analyze final results (full num_steps)
         analyze_gcg_results(lightning_model, gcg_output_file)
         
         # Log the output file as an artifact
         artifact = wandb.Artifact(
             name=f"gcg_results_{model_name}",
             type="results",
-            description=f"GCG attack results for model {model_name}"
+            description=f"GCG attack results for model {model_name} with convergence analysis"
         )
         artifact.add_file(str(gcg_output_file))
         wandb.log_artifact(artifact)
