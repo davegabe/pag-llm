@@ -144,19 +144,19 @@ class PosMaskedIdentityGradEmbeddingsModel(BaseLMModel):
             masked_x_embed = self.model.get_input_embeddings()(masked_input_ids)
 
             # Get the gradients on the masked embeddings
-            masked_x_embed.requires_grad_(True)
+            if create_graph:
+                masked_x_embed.requires_grad_(True)
 
             masked_outputs: CausalLMOutputWithPast = self.model(inputs_embeds=masked_x_embed,
                                                                 attention_mask=batch.attention_mask,
                                                                 labels='dummy',
                                                                 shift_labels=shift_labels,
                                                                 output_hidden_states=False)
-            assert masked_x_embed.requires_grad
-            masked_outputs.requires_grad_(True)
-            assert masked_outputs.loss.requires_grad
-            masked_x_grads = torch.autograd.grad(masked_outputs.loss,
-                                                 [masked_x_embed],
-                                                 create_graph=create_graph)[0]
+            masked_x_grads = torch.autograd.grad(
+                masked_outputs.loss,
+                [masked_x_embed],
+                create_graph=create_graph
+            )[0]
 
             # We want that gradients on the masked X will reconstruct the original X
             # ==> We want to ignore the gradients on non-masked/visible tokens
