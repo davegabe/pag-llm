@@ -232,3 +232,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
     def validation_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         with torch.inference_mode(mode=False):
             return self._step(batch, 'val')
+
+    def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
+        with torch.inference_mode(mode=False):
+            return self._step(batch, 'test')
