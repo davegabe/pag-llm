@@ -870,3 +870,6 @@ def main(cfg: CustomLLMPagConfig):
     print(f"Experiment logged to wandb: {wandb.run.url}")
     wandb.finish()
 
+
+if __name__ == "__main__":
+    main()
