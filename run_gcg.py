@@ -758,7 +758,10 @@ def main(cfg: CustomLLMPagConfig):
     # Set float32 matmul precision
     torch.set_float32_matmul_precision('medium')
 
-    # Initialize wandb
+    run_generation = True
+    run_analysis = False
+
+    # Initialize wandb only if generation or analysis is run
     run_name = f"gcg_attack_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     wandb.init(
         entity="pag-llm-team",
@@ -769,75 +772,101 @@ def main(cfg: CustomLLMPagConfig):
         },
         tags=["gcg", "adversarial_attack", "language_model", "security"]
     )
-
-    # Instantiate model and data module
-    lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
-        cfg.model.checkpoint_path,
-        cfg,
-    )
-
-    torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    if cfg.training.device is not None:
-        torch_device = f'cuda:{cfg.training.device[0]}'
-    lightning_model.to(torch_device).eval()
     
-    # Log model information
-    total_params = sum(p.numel() for p in lightning_model.parameters())
-    trainable_params = sum(p.numel() for p in lightning_model.parameters() if p.requires_grad)
-    wandb.log({
-        "model_info/total_parameters": total_params,
-        "model_info/trainable_parameters": trainable_params,
-        "model_info/model_name": model_name,
-        "model_info/device": str(torch_device)
-    })
-
-    # Run GCG
-    num_steps = 1500
-    gcg = gcg_algorithm.GCG(
-        model=lightning_model.model,
-        tokenizer=lightning_model.tokenizer,
-        num_prefix_tokens=20, # GCG original work uses 20
-        num_steps=num_steps, # Extended to num_steps for convergence analysis
-        search_width=512, # GCG original work uses 512 as "batch size"
-        top_k=256, # GCG original work uses 256
-    )
-    # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
-
     gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
-    if gcg_output_file.exists():
-        print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
-    else:
-        # Create 3 intervals based on num_steps (1/3, 2/3, and full num_steps)
-        log_intervals = [num_steps // 3, 2 * num_steps // 3, num_steps]
-        print(f"Running GCG evaluation with convergence logging at steps: {log_intervals}")
-        
-        gcg_results = run_gcg_with_convergence_logging(
-            gcg, 
-            data_module.test_dataset, 
-            gcg_output_file, 
-            log_intervals=log_intervals,
-            lightning_model=lightning_model,
-            cfg=cfg
+
+    # Instantiate model and data module only if needed
+    if run_generation or (run_analysis and not gcg_output_file.exists()):
+        lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
+            cfg.model.checkpoint_path,
+            cfg,
         )
-        
-        # Create convergence analysis chart
-        create_convergence_chart(log_intervals)
-        
-        # Analyze final results (full num_steps)
-        analyze_gcg_results(lightning_model, gcg_output_file)
-        
-        # Log the output file as an artifact
-        artifact = wandb.Artifact(
-            name=f"gcg_results_{model_name}",
-            type="results",
-            description=f"GCG attack results for model {model_name} with convergence analysis"
+
+        torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        if cfg.training.device is not None:
+            torch_device = f'cuda:{cfg.training.device[0]}'
+        lightning_model.to(torch_device).eval()
+
+        # Log model information
+        if wandb.run is not None:
+            total_params = sum(p.numel() for p in lightning_model.parameters())
+            trainable_params = sum(p.numel() for p in lightning_model.parameters() if p.requires_grad)
+            wandb.log({
+                "model_info/total_parameters": total_params,
+                "model_info/trainable_parameters": trainable_params,
+                "model_info/model_name": model_name,
+                "model_info/device": str(torch_device)
+            })
+    elif run_analysis:
+        # Load model only for analysis if generation is skipped and file exists
+        lightning_model, _, model_name, cfg = load_model_from_checkpoint(
+            cfg.model.checkpoint_path,
+            cfg,
         )
-        artifact.add_file(str(gcg_output_file))
-        wandb.log_artifact(artifact)
-    
-        print(f"Experiment logged to wandb: {wandb.run.url}")
+
+    # Update output file path with correct model name
+    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
+
+    if run_generation:
+        # Run GCG
+        num_steps = 1500
+        gcg = gcg_algorithm.GCG(
+            model=lightning_model.model,
+            tokenizer=lightning_model.tokenizer,
+            num_prefix_tokens=20, # GCG original work uses 20
+            num_steps=num_steps, # Extended to num_steps for convergence analysis
+            search_width=512, # GCG original work uses 512 as "batch size"
+            top_k=256, # GCG original work uses 256
+        )
+
+        if gcg_output_file.exists():
+            print(f"File {gcg_output_file} already exists. Skipping GCG generation.")
+        else:
+            # Create 3 intervals based on num_steps (1/3, 2/3, and full num_steps)
+            log_intervals = [num_steps // 3, 2 * num_steps // 3, num_steps]
+            # Ensure log intervals are unique and sorted
+            log_intervals = sorted(list(set([max(1, interval) for interval in log_intervals])))
+            print(f"Running GCG generation with convergence logging at steps: {log_intervals}")
+            
+            gcg_results = run_gcg_with_convergence_logging(
+                gcg, 
+                data_module.test_dataset, 
+                gcg_output_file, 
+                log_intervals=log_intervals,
+                lightning_model=lightning_model,
+                cfg=cfg
+            )
+
+            # Log the output file as an artifact
+            if wandb.run is not None:
+                artifact = wandb.Artifact(
+                    name=f"gcg_results_{model_name}",
+                    type="results",
+                    description=f"GCG attack results for model {model_name} with convergence analysis"
+                )
+                artifact.add_file(str(gcg_output_file))
+                wandb.log_artifact(artifact)
+
+    if run_analysis:
+        if gcg_output_file.exists():
+            print(f"\nAnalyzing results from {gcg_output_file}...")
+            
+            # Determine analysis parameters
+            num_steps_for_analysis = 1500  # Default, could be loaded from config or results
+            analysis_log_intervals = [num_steps_for_analysis // 3, 2 * num_steps_for_analysis // 3, num_steps_for_analysis]
+            analysis_log_intervals = sorted(list(set([max(1, interval) for interval in analysis_log_intervals])))
+            
+            # Create convergence analysis chart
+            create_convergence_chart(analysis_log_intervals)
+            
+            # Analyze final results
+            analyze_gcg_results(lightning_model, gcg_output_file)
+            
+        else:
+            print(f"Results file {gcg_output_file} not found. Cannot run analysis.")
+            if not run_generation:
+                print("Tip: Run with generation enabled first, or provide an existing results file.")
+
+    print(f"Experiment logged to wandb: {wandb.run.url}")
     wandb.finish()
 
-
-if __name__ == '__main__':
-    main()
