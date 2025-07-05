@@ -772,15 +772,16 @@ def main(cfg: CustomLLMPagConfig):
         },
         tags=["gcg", "adversarial_attack", "language_model", "security"]
     )
-    
+
+
+    lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
+        cfg.model.checkpoint_path,
+        cfg,
+    )
     gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
 
     # Instantiate model and data module only if needed
     if run_generation or (run_analysis and not gcg_output_file.exists()):
-        lightning_model, data_module, model_name, cfg = load_model_from_checkpoint(
-            cfg.model.checkpoint_path,
-            cfg,
-        )
 
         torch_device = 'cuda' if torch.cuda.is_available() else 'cpu'
         if cfg.training.device is not None:
@@ -797,12 +798,6 @@ def main(cfg: CustomLLMPagConfig):
                 "model_info/model_name": model_name,
                 "model_info/device": str(torch_device)
             })
-    elif run_analysis:
-        # Load model only for analysis if generation is skipped and file exists
-        lightning_model, _, model_name, cfg = load_model_from_checkpoint(
-            cfg.model.checkpoint_path,
-            cfg,
-        )
 
     # Update output file path with correct model name
     gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
