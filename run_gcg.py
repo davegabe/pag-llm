@@ -58,7 +58,7 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     torch.manual_seed(42)
     gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
                                                          target_response_len=10,
-                                                         max_samples_to_attack=2_000,
+                                                         max_samples_to_attack=1000,
                                                          random_select_samples=True)
     evaluation_time = time.time() - start_time
     
