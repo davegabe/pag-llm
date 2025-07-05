@@ -9,12 +9,14 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence
 from tqdm import tqdm
 import wandb
+from sentence_transformers import SentenceTransformer
 
 from config import CustomLLMPagConfig, apply_config
 from data.data_processor import TextDataset
 from gcg import gcg_algorithm, gcg_evaluation
 from instantiate import load_model_from_checkpoint
 from models.base_model import BaseLMModel
+from infer_backward_tinystories import load_semantic_model, compute_semantic_similarity, get_batch_perplexity
 
 
 def run_gcg_single_attack(gcg: gcg_algorithm.GCG, target_response: str):
@@ -275,7 +277,9 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
 
 def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDataset, 
                                      gcg_output_file: pathlib.Path, 
-                                     log_intervals: list[int]):
+                                     log_intervals: list[int],
+                                     lightning_model: BaseLMModel,
+                                     cfg: CustomLLMPagConfig):
     """
     Run GCG evaluation with intermediate logging at specified step intervals.
     This runs GCG once for the maximum steps and collects results at intermediate intervals.
@@ -285,8 +289,14 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
         dataset: Dataset to evaluate on
         gcg_output_file: Path to save final results
         log_intervals: List of step intervals to log metrics at (should be 3 intervals)
+        lightning_model: Language model for computing naturalness metrics
+        cfg: Configuration object for loading semantic model
     """
     print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
+    
+    # Initialize semantic model for naturalness metrics
+    print("Loading SentenceTransformer model for naturalness metrics...")
+    semantic_model = load_semantic_model(cfg)
     
     # Log GCG configuration
     wandb.log({
@@ -310,7 +320,9 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
         target_response_len=10,
         max_samples_to_attack=2_000,
         random_select_samples=True,
-        log_intervals=log_intervals
+        log_intervals=log_intervals,
+        lightning_model=lightning_model,
+        semantic_model=semantic_model
     )
     
     evaluation_time = time.time() - start_time
@@ -330,7 +342,8 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
     return gcg_results
 
 
-def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_interval: int):
+def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_interval: int, 
+                           lightning_model: BaseLMModel = None, semantic_model: SentenceTransformer = None):
     """Log convergence metrics for a specific step interval."""
     # Compute success rate
     num_successful_tokens = sum(
@@ -347,9 +360,9 @@ def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_in
     successful_samples = [r for r in gcg_results if r.get_success_tokens() >= 2]
     sample_success_rate = len(successful_samples) / len(gcg_results) if gcg_results else 0
     
-    # Log metrics with step interval prefix
+    # Log basic metrics with step interval prefix
     prefix = f"convergence_{step_interval}steps"
-    wandb.log({
+    basic_metrics = {
         f"{prefix}/token_success_rate": token_success_rate,
         f"{prefix}/sample_success_rate": sample_success_rate,
         f"{prefix}/successful_tokens": num_successful_tokens,
@@ -357,10 +370,26 @@ def log_convergence_metrics(gcg_results: list[gcg_evaluation.GCGResult], step_in
         f"{prefix}/successful_samples": len(successful_samples),
         f"{prefix}/total_samples": len(gcg_results),
         f"{prefix}/steps": step_interval
-    })
+    }
+    
+    # Compute and log naturalness metrics if models are provided
+    if lightning_model is not None and semantic_model is not None:
+        naturalness_metrics = compute_naturalness_metrics(
+            gcg_results, lightning_model, semantic_model, step_interval
+        )
+        basic_metrics.update(naturalness_metrics)
+    
+    wandb.log(basic_metrics)
     
     print(f"Step {step_interval}: Token success rate: {token_success_rate:.2%}, "
           f"Sample success rate: {sample_success_rate:.2%}")
+    
+    if lightning_model is not None and semantic_model is not None:
+        print(f"  Naturalness metrics:")
+        print(f"    Mean prefix perplexity: {basic_metrics.get(f'naturalness_{step_interval}steps/mean_prefix_perplexity', 0):.2f}")
+        print(f"    Mean semantic similarity: {basic_metrics.get(f'naturalness_{step_interval}steps/mean_semantic_similarity', 0):.4f}")
+        print(f"    Mean non-alphanumeric ratio: {basic_metrics.get(f'naturalness_{step_interval}steps/mean_non_alphanumeric_ratio', 0):.4f}")
+        print(f"    Mean max consecutive repetition: {basic_metrics.get(f'naturalness_{step_interval}steps/mean_max_consecutive_repetition', 0):.2f}")
 
 
 def create_convergence_chart(log_intervals: list[int]):
@@ -413,7 +442,9 @@ def evaluate_model_with_gcg_convergence(gcg: gcg_algorithm.GCG,
                                        target_response_len: int,
                                        random_select_samples: bool = True,
                                        max_samples_to_attack: int | None = None,
-                                       log_intervals: list[int] = None) -> list[gcg_evaluation.GCGResult]:
+                                       log_intervals: list[int] = None,
+                                       lightning_model: BaseLMModel = None,
+                                       semantic_model: SentenceTransformer = None) -> list[gcg_evaluation.GCGResult]:
     """
     Run GCG evaluation with intermediate convergence logging.
     This function runs GCG once per sample and logs metrics at specified intervals.
@@ -425,6 +456,8 @@ def evaluate_model_with_gcg_convergence(gcg: gcg_algorithm.GCG,
         random_select_samples: Whether to randomly select samples from the dataset or not
         max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
         log_intervals: List of step intervals to log metrics at
+        lightning_model: Language model for computing naturalness metrics
+        semantic_model: SentenceTransformer model for semantic similarity
         
     Returns:
         List of GCGResult objects from the final evaluation
@@ -506,9 +539,212 @@ def evaluate_model_with_gcg_convergence(gcg: gcg_algorithm.GCG,
     for interval in log_intervals:
         if interval_results[interval]:
             print(f"\nLogging metrics for {interval} steps...")
-            log_convergence_metrics(interval_results[interval], interval)
+            log_convergence_metrics(interval_results[interval], interval, lightning_model, semantic_model)
 
     return final_results
+
+
+@torch.no_grad()
+def count_repeated_tokens(x_input_ids: torch.Tensor, x_attention_mask: torch.Tensor = None) -> torch.Tensor:
+    """
+    Count the number of repeated tokens in the given input IDs, considering the attention mask for valid tokens.
+    Adapted from infer_backward_tinystories.py
+    
+    Args:
+        x_input_ids: Input IDs of the sentences.
+        x_attention_mask: Attention mask of the sentences. If None, assumes all tokens are valid.
+
+    Returns:
+        torch.Tensor: The number of repeated tokens for each sentence.
+    """
+    if x_input_ids.ndim == 1:
+        x_input_ids = x_input_ids.unsqueeze(0)
+    
+    if x_attention_mask is None:
+        x_attention_mask = torch.ones_like(x_input_ids)
+    elif x_attention_mask.ndim == 1:
+        x_attention_mask = x_attention_mask.unsqueeze(0)
+    
+    assert x_input_ids.shape == x_attention_mask.shape, \
+        f'input_ids and attention_mask shape mismatch: {x_input_ids.shape} != {x_attention_mask.shape}'
+    assert x_input_ids.ndim == 2, \
+        f'input_ids shape mismatch: {x_input_ids.shape} != (batch_size, seq_len)'
+
+    num_classes = x_input_ids.max().item() + 1
+
+    # Set an invalid token ID where the attention_mask is zero
+    invalid_token_id = num_classes
+    x_input_ids = x_input_ids.masked_fill(x_attention_mask == 0, invalid_token_id)
+
+    # Get the counts of each token in the batch, keeping the batch dimension
+    target = torch.zeros(x_input_ids.size(0), invalid_token_id + 1, dtype=x_input_ids.dtype, device=x_input_ids.device)
+    values = torch.ones_like(x_input_ids)
+    target.scatter_add_(dim=1, index=x_input_ids, src=values)
+
+    # Remove the invalid token id from the target
+    target = target[:, :invalid_token_id]
+
+    # Now, remove zeros (tokens not showing in the input_ids) and ones (tokens not repeating) from the target
+    target = target.masked_fill_(target < 2, 1)
+    return (target - 1).sum(dim=1)
+
+
+def compute_non_alphanumeric_ratio(text: str) -> float:
+    """
+    Compute the ratio of non-alphanumeric characters in the text.
+    
+    Args:
+        text: Input text string
+        
+    Returns:
+        float: Ratio of non-alphanumeric characters (0.0 to 1.0)
+    """
+    if not text:
+        return 0.0
+    
+    non_alphanumeric_count = sum(1 for char in text if not char.isalnum())
+    return non_alphanumeric_count / len(text)
+
+
+def compute_max_consecutive_token_repetition(input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> int:
+    """
+    Compute the maximum consecutive token repetition in the input sequence.
+    
+    Args:
+        input_ids: Input token IDs (1D tensor)
+        attention_mask: Attention mask (1D tensor). If None, assumes all tokens are valid.
+        
+    Returns:
+        int: Maximum consecutive token repetition length
+    """
+    if input_ids.ndim > 1:
+        input_ids = input_ids.squeeze()
+    
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    elif attention_mask.ndim > 1:
+        attention_mask = attention_mask.squeeze()
+    
+    # Get valid tokens only
+    valid_tokens = input_ids[attention_mask == 1]
+    
+    if len(valid_tokens) <= 1:
+        return 1
+    
+    max_consecutive = 1
+    current_consecutive = 1
+    
+    for i in range(1, len(valid_tokens)):
+        if valid_tokens[i] == valid_tokens[i-1]:
+            current_consecutive += 1
+            max_consecutive = max(max_consecutive, current_consecutive)
+        else:
+            current_consecutive = 1
+    
+    return max_consecutive
+
+
+def compute_naturalness_metrics(gcg_results: list[gcg_evaluation.GCGResult], 
+                               lightning_model: BaseLMModel,
+                               semantic_model: SentenceTransformer,
+                               step_interval: int,
+                               batch_size: int = 128) -> dict:
+    """
+    Compute naturalness metrics for GCG-generated prefixes.
+    
+    Args:
+        gcg_results: List of GCG results
+        lightning_model: The language model for computing perplexity
+        semantic_model: SentenceTransformer model for semantic similarity
+        step_interval: The step interval for logging
+        batch_size: Batch size for processing
+        
+    Returns:
+        dict: Dictionary containing all computed metrics
+    """
+    if not gcg_results:
+        return {}
+    
+    tokenizer = lightning_model.tokenizer
+    device = lightning_model.device
+    
+    # Collect all metrics
+    prefix_perplexities = []
+    total_token_repetitions = []
+    semantic_similarities = []
+    non_alphanumeric_ratios = []
+    max_consecutive_repetitions = []
+    
+    # Process in batches
+    for start_i in range(0, len(gcg_results), batch_size):
+        end_i = min(start_i + batch_size, len(gcg_results))
+        batch = gcg_results[start_i:end_i]
+        
+        # Handle tokenizers that might not have a pad token
+        pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+        
+        # Prepare batch data
+        original_prefix_ids = pad_sequence([torch.tensor(result.original_prefix_ids) for result in batch], 
+                                         batch_first=True, padding_value=pad_token_id).to(device)
+        attack_prefix_ids = []
+        
+        # Extract attack prefixes from attack strings
+        for result in batch:
+            attack_tokens = tokenizer.encode(result.x_attack_str, return_tensors='pt').squeeze()
+            if attack_tokens.ndim == 0:
+                attack_tokens = attack_tokens.unsqueeze(0)
+            attack_prefix_ids.append(attack_tokens)
+        
+        attack_prefix_ids = pad_sequence(attack_prefix_ids, batch_first=True, padding_value=pad_token_id).to(device)
+        
+        # Create attention masks
+        original_attention_mask = (original_prefix_ids != pad_token_id).long()
+        attack_attention_mask = (attack_prefix_ids != pad_token_id).long()
+        
+        # Compute perplexity for attack prefixes
+        attack_perplexities = get_batch_perplexity(lightning_model, attack_prefix_ids, attack_attention_mask)
+        prefix_perplexities.extend(attack_perplexities.cpu().tolist())
+        
+        # Compute token repetition for attack prefixes
+        attack_repetitions = count_repeated_tokens(attack_prefix_ids, attack_attention_mask)
+        total_token_repetitions.extend(attack_repetitions.cpu().tolist())
+        
+        # Compute semantic similarity and character-level metrics
+        for i, result in enumerate(batch):
+            # Get original and attack prefix texts
+            original_text = tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True)
+            attack_text = result.x_attack_str
+            
+            # Semantic similarity
+            semantic_sim = compute_semantic_similarity(attack_text, original_text, semantic_model)
+            semantic_similarities.append(semantic_sim)
+            
+            # Non-alphanumeric ratio
+            non_alpha_ratio = compute_non_alphanumeric_ratio(attack_text)
+            non_alphanumeric_ratios.append(non_alpha_ratio)
+            
+            # Maximum consecutive token repetition
+            max_consecutive = compute_max_consecutive_token_repetition(
+                attack_prefix_ids[i], attack_attention_mask[i]
+            )
+            max_consecutive_repetitions.append(max_consecutive)
+    
+    # Compute aggregate metrics
+    metrics = {
+        f"naturalness_{step_interval}steps/mean_prefix_perplexity": sum(prefix_perplexities) / len(prefix_perplexities),
+        f"naturalness_{step_interval}steps/std_prefix_perplexity": torch.tensor(prefix_perplexities).std().item(),
+        f"naturalness_{step_interval}steps/mean_total_token_repetition": sum(total_token_repetitions) / len(total_token_repetitions),
+        f"naturalness_{step_interval}steps/std_total_token_repetition": torch.tensor(total_token_repetitions).std().item(),
+        f"naturalness_{step_interval}steps/mean_semantic_similarity": sum(semantic_similarities) / len(semantic_similarities),
+        f"naturalness_{step_interval}steps/std_semantic_similarity": torch.tensor(semantic_similarities).std().item(),
+        f"naturalness_{step_interval}steps/mean_non_alphanumeric_ratio": sum(non_alphanumeric_ratios) / len(non_alphanumeric_ratios),
+        f"naturalness_{step_interval}steps/std_non_alphanumeric_ratio": torch.tensor(non_alphanumeric_ratios).std().item(),
+        f"naturalness_{step_interval}steps/mean_max_consecutive_repetition": sum(max_consecutive_repetitions) / len(max_consecutive_repetitions),
+        f"naturalness_{step_interval}steps/std_max_consecutive_repetition": torch.tensor(max_consecutive_repetitions).std().item(),
+        f"naturalness_{step_interval}steps/num_samples": len(gcg_results),
+    }
+    
+    return metrics
 
 
 @apply_config('inv-first-tiny-train-small')
@@ -579,7 +815,9 @@ def main(cfg: CustomLLMPagConfig):
             gcg, 
             data_module.test_dataset, 
             gcg_output_file, 
-            log_intervals=log_intervals
+            log_intervals=log_intervals,
+            lightning_model=lightning_model,
+            cfg=cfg
         )
         
         # Create convergence analysis chart
