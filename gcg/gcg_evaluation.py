@@ -1,8 +1,10 @@
 from dataclasses import dataclass
 from typing import Any
 
+from models.base_model import BaseLMModel
 import torch
 from tqdm import tqdm
+import wandb
 
 from data.data_processor import TextDataset
 from gcg import gcg_algorithm, gcg_utils
@@ -72,39 +74,48 @@ class GCGResult:
         )
 
 def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
-                            dataset: TextDataset,
-                            target_response_len: int,
-                            random_select_samples: bool = True,
-                            max_samples_to_attack: int | None = None) -> list[GCGResult]:
+                           dataset: TextDataset,
+                           target_response_len: int,
+                           random_select_samples: bool = True,
+                           max_samples_to_attack: int | None = None,
+                           evaluate_every_n_steps: int = 500,
+                           lightning_model: BaseLMModel = None,
+                           semantic_model = None) -> list[GCGResult]:
     """
-        Run GCG evaluation on the dataset.
-
-        Args:
-            gcg: GCG object
-            dataset: Dataset to evaluate on
-            target_response_len: Length of the target attack response we want to generate
-            random_select_samples: Whether to randomly select samples from the dataset or not
-            max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
-
-        Returns:
-            attack_success: Number of successful attacks
-            attacks_total: Total number of attacks attempted
-            steps_run: Total number of steps run for the successful attacks
-        """
+    Run GCG evaluation with intermediate convergence logging.
+    This function runs GCG once per sample and logs metrics at specified intervals.
+    
+    Args:
+        gcg: GCG object
+        dataset: Dataset to evaluate on
+        target_response_len: Length of the target attack response we want to generate
+        random_select_samples: Whether to randomly select samples from the dataset or not
+        max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
+        evaluate_every_n_steps: Number of steps between metric evaluations and logging
+        lightning_model: Language model for computing naturalness metrics
+        semantic_model: SentenceTransformer model for semantic similarity
+        
+    Returns:
+        List of GCGResult objects from the final evaluation
+    """
     gcg_utils.set_seeds()
     prefix_len = gcg.num_prefix_tokens
 
     max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
     max_samples_to_attack = min(max_samples_to_attack, len(dataset))
 
-    samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist() \
-        if random_select_samples \
-        else list(range(max_samples_to_attack))
+    if max_samples_to_attack < len(dataset) and random_select_samples:
+        samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
+    else:
+        samples_to_attack = list(range(max_samples_to_attack))
 
-    attacks: list[GCGResult] = []
+    # Determine interval checkpoints
+    intervals = list(range(evaluate_every_n_steps, gcg.num_steps + 1, evaluate_every_n_steps))
+    interval_results: dict[int, list[GCGResult]] = {step: [] for step in intervals}
+    final_results: list[GCGResult] = []
 
     # Iterate through the dataset and attack each example
-    for sample_idx in tqdm(samples_to_attack, desc="Evaluating with GCG"):
+    for sample_idx in tqdm(samples_to_attack, desc="Running GCG Attacks"):
         item = dataset[sample_idx]
         input_ids = item.input_ids[item.attention_mask == 1]
         if input_ids.size(-1) <= prefix_len + target_response_len:
@@ -113,21 +124,155 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
 
         # Split into prefix and target response
         original_prefix_ids = input_ids[:prefix_len]
-        # original_prefix_str = gcg.tokenizer.decode(original_prefix_ids)
         target_response_ids = input_ids[prefix_len:prefix_len + target_response_len]
         target_response_str = gcg.tokenizer.decode(target_response_ids)
 
-        # Run the attack
-        x_attack_str, y_attack_response, steps = gcg.run(target_response_str, show_progress=False)
-        # noinspection PyTypeChecker
-        y_attack_response_ids: torch.Tensor = gcg.tokenizer.encode(y_attack_response, return_tensors='pt')[0]
+        # Capture intermediate attacks at our evaluation intervals
+        def capture_intermediate(step: int, x_str: str, y_str: str):
+            if step in interval_results:
+                y_ids = gcg.tokenizer.encode(y_str, return_tensors="pt")[0]
+                interval_results[step].append(GCGResult(
+                    original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
+                    target_response_ids=target_response_ids.detach().cpu().tolist(),
+                    x_attack_str=x_str,
+                    y_attack_response_ids=y_ids.detach().cpu().tolist(),
+                    steps=step,
+                ))
 
-        attacks.append(GCGResult(
+        # Run the attack with automatic intermediate calls
+        x_attack_str, y_attack_str, total_steps = gcg.run(
+            target_response_str,
+            show_progress=False,
+            evaluate_every_n_steps=evaluate_every_n_steps,
+            intermediate_callback=capture_intermediate,
+            sample_idx=sample_idx
+        )
+
+        # Store the final attack for this sample
+        y_final_ids = gcg.tokenizer.encode(y_attack_str, return_tensors="pt")[0]
+        result = GCGResult(
             original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
             target_response_ids=target_response_ids.detach().cpu().tolist(),
             x_attack_str=x_attack_str,
-            y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
-            steps=steps,
-        ))
+            y_attack_response_ids=y_final_ids.detach().cpu().tolist(),
+            steps=total_steps,
+        )
+        final_results.append(result)
 
-    return attacks
+    # Now log metrics for each interval
+    for step, results in interval_results.items():
+        if not results:
+            continue
+
+        # Compute basic success metrics
+        token_success_rate = _compute_token_success_rate(results)
+        sample_success_rate = _compute_sample_success_rate(results)
+
+        # Log basic metrics
+        metrics = {
+            f"convergence/{step}/token_success_rate": token_success_rate,
+            f"convergence/{step}/sample_success_rate": sample_success_rate,
+            f"convergence/{step}/num_samples": len(results),
+            f"convergence/{step}/steps": step
+        }
+
+        # Compute and add naturalness metrics if models are provided
+        if lightning_model is not None and semantic_model is not None:
+            naturalness_metrics = _compute_naturalness_metrics(
+                results, lightning_model, semantic_model, step
+            )
+            for key, value in naturalness_metrics.items():
+                metrics[f"convergence/{step}/{key}"] = value
+
+        wandb.log(metrics)
+        
+        print(f"Step {step}: Token success rate: {token_success_rate:.2%}, "
+              f"Sample success rate: {sample_success_rate:.2%}")
+
+    return final_results
+
+
+def _compute_token_success_rate(gcg_results: list[GCGResult]) -> float:
+    """Compute token-level success rate."""
+    num_successful_tokens = sum(result.get_success_tokens() for result in gcg_results)
+    num_total_tokens = sum(
+        min(len(result.target_response_ids), len(result.y_attack_response_ids))
+        for result in gcg_results
+    )
+    return num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0.0
+
+
+def _compute_sample_success_rate(gcg_results: list[GCGResult], min_success_tokens: int = 2) -> float:
+    """Compute sample-level success rate (samples with at least min_success_tokens successful tokens)."""
+    successful_samples = [r for r in gcg_results if r.get_success_tokens() >= min_success_tokens]
+    return len(successful_samples) / len(gcg_results) if gcg_results else 0.0
+
+
+def _compute_naturalness_metrics(gcg_results: list[GCGResult], 
+                                lightning_model: BaseLMModel,
+                                semantic_model,
+                                step_interval: int,
+                                batch_size: int = 128) -> dict:
+    """Compute naturalness metrics for GCG-generated prefixes."""
+    # Import functions from run_gcg.py and infer_backward_tinystories.py
+    from infer_backward_tinystories import get_batch_perplexity, compute_semantic_similarity
+    from run_gcg import compute_non_alphanumeric_ratio, compute_max_consecutive_token_repetition
+    
+    if not gcg_results:
+        return {}
+    
+    tokenizer = lightning_model.tokenizer
+    device = lightning_model.device
+    
+    # Collect all metrics
+    prefix_perplexities = []
+    semantic_similarities = []
+    non_alphanumeric_ratios = []
+    max_consecutive_repetitions = []
+    
+    # Process in batches for efficiency
+    for start_i in range(0, len(gcg_results), batch_size):
+        end_i = min(start_i + batch_size, len(gcg_results))
+        batch = gcg_results[start_i:end_i]
+        
+        # Prepare attack prefix texts for batch processing
+        attack_texts = [result.x_attack_str for result in batch]
+        original_texts = [tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True) 
+                         for result in batch]
+        
+        # Tokenize attack prefixes for perplexity computation
+        attack_encodings = tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True)
+        attack_input_ids = attack_encodings['input_ids'].to(device)
+        attack_attention_mask = attack_encodings['attention_mask'].to(device)
+        
+        # Compute perplexity for attack prefixes
+        attack_perplexities = get_batch_perplexity(lightning_model, attack_input_ids, attack_attention_mask)
+        prefix_perplexities.extend(attack_perplexities.cpu().tolist())
+        
+        # Compute other metrics for each sample in batch
+        for i, (attack_text, original_text) in enumerate(zip(attack_texts, original_texts)):
+            # Semantic similarity
+            if semantic_model is not None:
+                semantic_sim = compute_semantic_similarity(attack_text, original_text, semantic_model)
+                semantic_similarities.append(semantic_sim)
+            
+            # Non-alphanumeric ratio
+            non_alpha_ratio = compute_non_alphanumeric_ratio(attack_text)
+            non_alphanumeric_ratios.append(non_alpha_ratio)
+            
+            # Maximum consecutive token repetition
+            attack_tokens = tokenizer.encode(attack_text, return_tensors='pt')
+            max_consecutive = compute_max_consecutive_token_repetition(attack_tokens)
+            max_consecutive_repetitions.append(max_consecutive)
+    
+    # Aggregate metrics
+    metrics = {
+        "mean_prefix_perplexity": sum(prefix_perplexities) / len(prefix_perplexities) if prefix_perplexities else 0.0,
+        "mean_non_alphanumeric_ratio": sum(non_alphanumeric_ratios) / len(non_alphanumeric_ratios) if non_alphanumeric_ratios else 0.0,
+        "mean_max_consecutive_repetition": sum(max_consecutive_repetitions) / len(max_consecutive_repetitions) if max_consecutive_repetitions else 0.0,
+    }
+    
+    if semantic_similarities:
+        metrics["mean_semantic_similarity"] = sum(semantic_similarities) / len(semantic_similarities)
+    
+    return metrics

@@ -59,7 +59,8 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     gcg_results = gcg_evaluation.evaluate_model_with_gcg(gcg, dataset,
                                                          target_response_len=10,
                                                          max_samples_to_attack=1000,
-                                                         random_select_samples=True)
+                                                         random_select_samples=True,
+                                                         evaluate_every_n_steps=500)
     evaluation_time = time.time() - start_time
     
     # Log evaluation time and basic stats
@@ -72,6 +73,8 @@ def run_full_gcg_evaluation(gcg: gcg_algorithm.GCG, dataset: TextDataset, gcg_ou
     with gcg_output_file.open('w') as f:
         json.dump([r.to_dict() for r in gcg_results], f, indent=4)
     print(f"Saved GCG results to {gcg_output_file}")
+    
+    return gcg_results
 
 
 def compute_success_rate(gcg_results: list[gcg_evaluation.GCGResult]) -> float:
@@ -277,9 +280,9 @@ def analyze_gcg_results(lightning_model: BaseLMModel, gcg_output_file: pathlib.P
 
 def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDataset, 
                                      gcg_output_file: pathlib.Path, 
-                                     log_intervals: list[int],
-                                     lightning_model: BaseLMModel,
-                                     cfg: CustomLLMPagConfig):
+                                     evaluate_every_n_steps: int = 500,
+                                     lightning_model: BaseLMModel = None,
+                                     cfg: CustomLLMPagConfig = None):
     """
     Run GCG evaluation with intermediate logging at specified step intervals.
     This runs GCG once for the maximum steps and collects results at intermediate intervals.
@@ -288,15 +291,17 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
         gcg: GCG algorithm instance
         dataset: Dataset to evaluate on
         gcg_output_file: Path to save final results
-        log_intervals: List of step intervals to log metrics at (should be 3 intervals)
+        evaluate_every_n_steps: Number of steps between evaluations (default: 500)
         lightning_model: Language model for computing naturalness metrics
         cfg: Configuration object for loading semantic model
     """
     print('Attacking:', gcg_output_file.stem, 'on', gcg.device)
     
-    # Initialize semantic model for naturalness metrics
-    print("Loading SentenceTransformer model for naturalness metrics...")
-    semantic_model = load_semantic_model(cfg)
+    # Initialize semantic model for naturalness metrics if cfg provided
+    semantic_model = None
+    if cfg is not None:
+        print("Loading SentenceTransformer model for naturalness metrics...")
+        semantic_model = load_semantic_model(cfg)
     
     # Log GCG configuration
     wandb.log({
@@ -306,21 +311,19 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
         "gcg_config/top_k": gcg.top_k,
         "gcg_config/device": str(gcg.device),
         "gcg_config/dataset_size": len(dataset),
-        "gcg_config/log_intervals": log_intervals
+        "gcg_config/evaluate_every_n_steps": evaluate_every_n_steps
     })
     
     start_time = time.time()
-    # Set random seed for reproducibility
-    torch.manual_seed(42)
     
     # Run single evaluation with intermediate logging
-    gcg_results = evaluate_model_with_gcg_convergence(
+    gcg_results = gcg_evaluation.evaluate_model_with_gcg(
         gcg, 
         dataset,
         target_response_len=10,
-        max_samples_to_attack=1_000,
+        max_samples_to_attack=None,
         random_select_samples=True,
-        log_intervals=log_intervals,
+        evaluate_every_n_steps=evaluate_every_n_steps,
         lightning_model=lightning_model,
         semantic_model=semantic_model
     )
@@ -436,114 +439,6 @@ def create_convergence_chart(log_intervals: list[int]):
             )
         })
 
-
-def evaluate_model_with_gcg_convergence(gcg: gcg_algorithm.GCG,
-                                       dataset: TextDataset,
-                                       target_response_len: int,
-                                       random_select_samples: bool = True,
-                                       max_samples_to_attack: int | None = None,
-                                       log_intervals: list[int] = None,
-                                       lightning_model: BaseLMModel = None,
-                                       semantic_model: SentenceTransformer = None) -> list[gcg_evaluation.GCGResult]:
-    """
-    Run GCG evaluation with intermediate convergence logging.
-    This function runs GCG once per sample and logs metrics at specified intervals.
-    
-    Args:
-        gcg: GCG object
-        dataset: Dataset to evaluate on
-        target_response_len: Length of the target attack response we want to generate
-        random_select_samples: Whether to randomly select samples from the dataset or not
-        max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
-        log_intervals: List of step intervals to log metrics at
-        lightning_model: Language model for computing naturalness metrics
-        semantic_model: SentenceTransformer model for semantic similarity
-        
-    Returns:
-        List of GCGResult objects from the final evaluation
-    """
-    from gcg import gcg_utils
-    
-    gcg_utils.set_seeds()
-    prefix_len = gcg.num_prefix_tokens
-
-    max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
-    max_samples_to_attack = min(max_samples_to_attack, len(dataset))
-
-    samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist() \
-        if random_select_samples \
-        else list(range(max_samples_to_attack))
-
-    # Storage for intermediate results at each interval
-    interval_results = {interval: [] for interval in log_intervals}
-    final_results = []
-
-    # Iterate through the dataset and attack each example
-    for sample_idx in tqdm(samples_to_attack, desc="Evaluating with GCG"):
-        item = dataset[sample_idx]
-        input_ids = item.input_ids[item.attention_mask == 1]
-        if input_ids.size(-1) <= prefix_len + target_response_len:
-            # Skip if the target response is too short
-            continue
-
-        # Split into prefix and target response
-        original_prefix_ids = input_ids[:prefix_len]
-        target_response_ids = input_ids[prefix_len:prefix_len + target_response_len]
-        target_response_str = gcg.tokenizer.decode(target_response_ids)
-
-        # Storage for intermediate attack states
-        intermediate_states = {}
-        
-        # Custom callback to capture intermediate states
-        def capture_intermediate_state(step: int, x_attack_str: str, y_attack_response: str):
-            if step in log_intervals:
-                intermediate_states[step] = {
-                    'x_attack_str': x_attack_str,
-                    'y_attack_response': y_attack_response
-                }
-
-        # Run the attack with intermediate logging
-        x_attack_str, y_attack_response, steps = gcg.run(
-            target_response_str, 
-            show_progress=False,
-            evaluate_every_n_steps=1,  # Check every step for intervals
-            intermediate_callback=capture_intermediate_state
-        )
-        
-        # Process intermediate results
-        for interval in log_intervals:
-            if interval in intermediate_states:
-                state = intermediate_states[interval]
-                y_attack_response_ids = gcg.tokenizer.encode(state['y_attack_response'], return_tensors='pt')[0]
-                
-                interval_result = gcg_evaluation.GCGResult(
-                    original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
-                    target_response_ids=target_response_ids.detach().cpu().tolist(),
-                    x_attack_str=state['x_attack_str'],
-                    y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
-                    steps=interval,
-                )
-                interval_results[interval].append(interval_result)
-        
-        # Store final result
-        y_attack_response_ids = gcg.tokenizer.encode(y_attack_response, return_tensors='pt')[0]
-        final_results.append(gcg_evaluation.GCGResult(
-            original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
-            target_response_ids=target_response_ids.detach().cpu().tolist(),
-            x_attack_str=x_attack_str,
-            y_attack_response_ids=y_attack_response_ids.detach().cpu().tolist(),
-            steps=steps,
-        ))
-
-    # Log metrics for each interval
-    for interval in log_intervals:
-        if interval_results[interval]:
-            print(f"\nLogging metrics for {interval} steps...")
-            log_convergence_metrics(interval_results[interval], interval, lightning_model, semantic_model)
-
-    return final_results
-
-
 @torch.no_grad()
 def count_repeated_tokens(x_input_ids: torch.Tensor, x_attention_mask: torch.Tensor = None) -> torch.Tensor:
     """
@@ -586,7 +481,8 @@ def count_repeated_tokens(x_input_ids: torch.Tensor, x_attention_mask: torch.Ten
 
     # Now, remove zeros (tokens not showing in the input_ids) and ones (tokens not repeating) from the target
     target = target.masked_fill_(target < 2, 1)
-    return (target - 1).sum(dim=1)
+    total_repeated_tokens = (target - 1).sum(dim=1)
+    return total_repeated_tokens
 
 
 def compute_non_alphanumeric_ratio(text: str) -> float:
@@ -732,15 +628,20 @@ def compute_naturalness_metrics(gcg_results: list[gcg_evaluation.GCGResult],
     # Compute aggregate metrics
     metrics = {
         f"naturalness_{step_interval}steps/mean_prefix_perplexity": sum(prefix_perplexities) / len(prefix_perplexities),
-        f"naturalness_{step_interval}steps/std_prefix_perplexity": torch.tensor(prefix_perplexities).std().item(),
+        f"naturalness_{step_interval}steps/std_prefix_perplexity": torch.tensor(prefix_perplexities, dtype=torch.float32).std().item(),
+
         f"naturalness_{step_interval}steps/mean_total_token_repetition": sum(total_token_repetitions) / len(total_token_repetitions),
-        f"naturalness_{step_interval}steps/std_total_token_repetition": torch.tensor(total_token_repetitions).std().item(),
+        f"naturalness_{step_interval}steps/std_total_token_repetition": torch.tensor(total_token_repetitions, dtype=torch.float32).std().item(),
+
         f"naturalness_{step_interval}steps/mean_semantic_similarity": sum(semantic_similarities) / len(semantic_similarities),
-        f"naturalness_{step_interval}steps/std_semantic_similarity": torch.tensor(semantic_similarities).std().item(),
+        f"naturalness_{step_interval}steps/std_semantic_similarity": torch.tensor(semantic_similarities, dtype=torch.float32).std().item(),
+
         f"naturalness_{step_interval}steps/mean_non_alphanumeric_ratio": sum(non_alphanumeric_ratios) / len(non_alphanumeric_ratios),
-        f"naturalness_{step_interval}steps/std_non_alphanumeric_ratio": torch.tensor(non_alphanumeric_ratios).std().item(),
+        f"naturalness_{step_interval}steps/std_non_alphanumeric_ratio": torch.tensor(non_alphanumeric_ratios, dtype=torch.float32).std().item(),
+
         f"naturalness_{step_interval}steps/mean_max_consecutive_repetition": sum(max_consecutive_repetitions) / len(max_consecutive_repetitions),
-        f"naturalness_{step_interval}steps/std_max_consecutive_repetition": torch.tensor(max_consecutive_repetitions).std().item(),
+        f"naturalness_{step_interval}steps/std_max_consecutive_repetition": torch.tensor(max_consecutive_repetitions, dtype=torch.float32).std().item(),
+
         f"naturalness_{step_interval}steps/num_samples": len(gcg_results),
     }
     
@@ -798,7 +699,7 @@ def main(cfg: CustomLLMPagConfig):
         tokenizer=lightning_model.tokenizer,
         num_prefix_tokens=20, # GCG original work uses 20
         num_steps=num_steps, # Extended to num_steps for convergence analysis
-        search_width=4096 * 8, # GCG original work uses 512 as "batch size"
+        search_width=512, # GCG original work uses 512 as "batch size"
         top_k=256, # GCG original work uses 256
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
@@ -807,23 +708,20 @@ def main(cfg: CustomLLMPagConfig):
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
-        # Create 3 intervals based on num_steps (1/3, 2/3, and full num_steps)
-        log_intervals = [num_steps // 3, 2 * num_steps // 3, num_steps]
-        print(f"Running GCG evaluation with convergence logging at steps: {log_intervals}")
+        # Use regular intervals for convergence logging (every 500 steps)
+        evaluate_every_n_steps = 500
+        print(f"Running GCG evaluation with convergence logging every {evaluate_every_n_steps} steps")
         
         gcg_results = run_gcg_with_convergence_logging(
             gcg, 
             data_module.test_dataset, 
             gcg_output_file, 
-            log_intervals=log_intervals,
+            evaluate_every_n_steps=evaluate_every_n_steps,
             lightning_model=lightning_model,
             cfg=cfg
         )
         
-        # Create convergence analysis chart
-        create_convergence_chart(log_intervals)
-        
-        # Analyze final results (full num_steps)
+        # Analyze final results
         analyze_gcg_results(lightning_model, gcg_output_file)
         
         # Log the output file as an artifact

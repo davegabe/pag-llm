@@ -30,7 +30,7 @@ class GCG:
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
             stop_after_same_loss_steps: int | None = 10, show_progress: bool = True,
-            intermediate_callback: callable = None) -> tuple[str, str, int]:
+            intermediate_callback: callable = None, sample_idx: int | None = None) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -43,6 +43,7 @@ class GCG:
             show_progress: Whether to show a progress bar during the attack.
             intermediate_callback: Optional callback function to call at intermediate steps.
                                  Called with (step, x_attack_str, y_attack_response).
+            sample_idx: Optional index of the sample being attacked, for logging purposes.
 
         Returns:
             x_attack_str: The final attack prompt.
@@ -59,7 +60,8 @@ class GCG:
         previous_losses: list[torch.Tensor] = []
 
         step: int = 0
-        for step in tqdm(range(self.num_steps), desc='Running GCG') if show_progress else range(self.num_steps):
+        desc = f'Running GCG Attack on sample #{sample_idx}' if sample_idx else 'Running GCG Attack on a sample'
+        for step in tqdm(range(self.num_steps), desc=desc, position=1) if show_progress else range(self.num_steps):
             x_one_hot.unsqueeze_(0)
             x_one_hot.requires_grad_(True)
             x_one_hot, loss = self._run_step(x_one_hot, y_ids, y_embeds)
@@ -74,16 +76,13 @@ class GCG:
 
                 previous_losses = previous_losses[-stop_after_same_loss_steps:]
 
-            if evaluate_every_n_steps is not None and step % evaluate_every_n_steps == 0:
+            if evaluate_every_n_steps is not None and step % evaluate_every_n_steps == 0 and step > 0:
                 x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+                if intermediate_callback is not None:
+                    intermediate_callback(step, x_attack_str, y_attack_response)
                 tqdm.write(f'Step: {step}')
                 tqdm.write(f'\tAttack: "{x_attack_str}"')
                 tqdm.write(f'\tLLM Response (loss: {loss.item():.3f}): "{y_attack_response}"\n')
-
-            # Call intermediate callback if provided
-            if intermediate_callback is not None:
-                x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
-                intermediate_callback(step, x_attack_str, y_attack_response)
 
         x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
         return x_attack_str, y_attack_response, step
