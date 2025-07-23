@@ -146,22 +146,19 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
         vocab_size = tokenizer.vocab_size
         
         # Create attention masks for variable length sequences
+        target_len = target_response_ids.shape[1]
         target_lengths = torch.tensor([len(result.target_response_ids) for result in batch], device=llm.device)
-        attack_lengths = torch.tensor([len(result.y_attack_response_ids) for result in batch], device=llm.device)
-        
-        # Create masks for valid positions (non-padded)
-        target_mask = torch.arange(max_suffix_len, device=llm.device).unsqueeze(0) < target_lengths.unsqueeze(1)
-        attack_mask = torch.arange(max_suffix_len, device=llm.device).unsqueeze(0) < attack_lengths.unsqueeze(1)
+        target_mask = torch.arange(target_len, device=llm.device).unsqueeze(0) < target_lengths.unsqueeze(1)
 
         @torch.no_grad()
         def _compute_y_logits(x: torch.Tensor) -> torch.Tensor:
             """
             Compute the logits that correspond to the prediction of the target suffix,
             given a prefix which may be the original prefix or the attack prefix.
-
+            
             Args:
                 x: The prefix tokens to be used for the forward pass.
-
+            
             Returns:
                 The logits for the target suffix, already flattened.
             """
@@ -169,19 +166,19 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
             # Compute the forward pass with the given prefix
             llm_tokens = torch.cat([x, target_response_ids], dim=1)
             logits = llm(llm_tokens, return_dict=True).logits
-
+            
             # Extract only the logits that should predict the target response
-            return logits[:, prefix_len - 1:-1, :]
+            return logits[:, prefix_len - 1:prefix_len - 1 + target_len, :]
 
         def _compute_logits_ce_loss(logits: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-            nonlocal target_response_ids, vocab_size, batch_size_actual, max_suffix_len
+            nonlocal target_response_ids, vocab_size, batch_size_actual, max_suffix_len, pad_token_id
             # Compute the cross-entropy loss for every sample in the batch, considering only valid (non-padded) positions
             ce_loss = F.cross_entropy(
-                logits.reshape(-1, vocab_size),
-                target_response_ids.view(-1),
+                logits.transpose(1, 2),  # (batch, vocab, seq)
+                target_response_ids,
                 reduction='none',
-            ).view(batch_size_actual, max_suffix_len)
-            
+                ignore_index=pad_token_id
+            )  # (batch, seq)
             # Apply mask to ignore padded positions and compute mean only over valid positions
             masked_loss = ce_loss * mask.float()
             return masked_loss.sum(dim=-1) / mask.sum(dim=-1).clamp(min=1)  # Avoid division by zero
@@ -201,8 +198,8 @@ def compute_attack_losses(gcg_results: list[gcg_evaluation.GCGResult], lightning
                 original_logits.reshape(-1, vocab_size).log_softmax(dim=-1),
                 reduction='none',
                 log_target=True,
-            ).sum(dim=-1).view(batch_size_actual, max_suffix_len)
-            
+            ).sum(dim=-1).view(batch_size_actual, target_len)
+
             # Apply mask and compute mean over valid positions
             masked_kl_div = kl_div * target_mask.float()
             kl_div_mean_per_sample = masked_kl_div.sum(dim=-1) / target_mask.sum(dim=-1).clamp(min=1)
@@ -693,13 +690,13 @@ def main(cfg: CustomLLMPagConfig):
     })
 
     # Run GCG
-    num_steps = 1500
+    num_steps = 500
     gcg = gcg_algorithm.GCG(
         model=lightning_model.model,
         tokenizer=lightning_model.tokenizer,
         num_prefix_tokens=20, # GCG original work uses 20
         num_steps=num_steps, # Extended to num_steps for convergence analysis
-        search_width=512, # GCG original work uses 512 as "batch size"
+        search_width=16384, # GCG original work uses 512 as "batch size"
         top_k=256, # GCG original work uses 256
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
@@ -708,8 +705,8 @@ def main(cfg: CustomLLMPagConfig):
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
     else:
-        # Use regular intervals for convergence logging (every 500 steps)
-        evaluate_every_n_steps = 500
+        # Use regular intervals for convergence logging
+        evaluate_every_n_steps = 125
         print(f"Running GCG evaluation with convergence logging every {evaluate_every_n_steps} steps")
         
         gcg_results = run_gcg_with_convergence_logging(
@@ -721,19 +718,19 @@ def main(cfg: CustomLLMPagConfig):
             cfg=cfg
         )
         
-        # Analyze final results
-        analyze_gcg_results(lightning_model, gcg_output_file)
-        
-        # Log the output file as an artifact
-        artifact = wandb.Artifact(
-            name=f"gcg_results_{model_name}",
-            type="results",
-            description=f"GCG attack results for model {model_name} with convergence analysis"
-        )
-        artifact.add_file(str(gcg_output_file))
-        wandb.log_artifact(artifact)
+    # Analyze final results
+    analyze_gcg_results(lightning_model, gcg_output_file)
     
-        print(f"Experiment logged to wandb: {wandb.run.url}")
+    # Log the output file as an artifact
+    artifact = wandb.Artifact(
+        name=f"gcg_results_{model_name}",
+        type="results",
+        description=f"GCG attack results for model {model_name} with convergence analysis"
+    )
+    artifact.add_file(str(gcg_output_file))
+    wandb.log_artifact(artifact)
+
+    print(f"Experiment logged to wandb: {wandb.run.url}")
     wandb.finish()
 
 
