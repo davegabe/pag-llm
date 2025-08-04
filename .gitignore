@@ -9,3 +9,4 @@ wandb/
 *.SLURMout
 /faster-gcg/
 offline_assets/
+best-checkpoints/

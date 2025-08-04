@@ -318,7 +318,7 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
         gcg, 
         dataset,
         target_response_len=10,
-        max_samples_to_attack=None,
+        max_samples_to_attack=int(len(dataset) * 0.1),  # Attack 10% of the dataset
         random_select_samples=True,
         evaluate_every_n_steps=evaluate_every_n_steps,
         lightning_model=lightning_model,
