@@ -4,9 +4,6 @@ from pathlib import Path
 
 import torch
 from lightning.pytorch.loggers import WandbLogger
-from models.pos_identity_grad_embeddings_model import PosIdentityGradEmbeddingsModel
-from models.pos_inv_first_token import PosInvFirstTokenModel
-from models.pos_masked_embeddings_grad_model import PosMaskedIdentityGradEmbeddingsModel
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.nn import CrossEntropyLoss
