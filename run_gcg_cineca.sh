@@ -78,10 +78,12 @@ echo
 
 # Load necessary modules
 module load profile/deeplrn
-module load anaconda3
-activate ilm
 
 cd "/leonardo/home/userexternal/$USER/pag-llm"
+
+module load python/3.11.7
+deactivate || true
+source .venv/bin/activate
 
 nvidia-smi
 
