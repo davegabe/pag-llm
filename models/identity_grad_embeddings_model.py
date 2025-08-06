@@ -7,6 +7,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
+from models.classification_strategies import ClassificationStrategy, GradSubtractClassificationStrategy, \
+    GradAdditionClassificationStrategy, GradValueClassificationStrategy
 from models.common import forward_grad_embeddings, compute_top_k_accuracies
 from utils.ngram_processor import NGramProcessor
 
@@ -17,13 +19,15 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             model: PreTrainedModel,
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
-            model_name: str = 'identity',
+            classification_strategy: ClassificationStrategy | str,
+            model_name: str,
             num_iterations: int = 1
     ):
         super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
+        self.classification_strategy = ClassificationStrategy.from_name(classification_strategy)
         self.k_samples = 3
         self.mask_values = [
             tokenizer.mask_token_id,
@@ -42,9 +46,6 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
 
         # Use default normalization layer
         self.emb_norm = None
-        
-        # Sign multiplier for gradient logits (typically 1 or -1)
-        self.grad_logits_sign = 1
         
         # Initialization methods for inverse validation
         self.inverse_init_methods = [] #['random', 'constant', 'ngram_based']
@@ -148,14 +149,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             # Use PAG head to predict tokens
             logits_pag_iter = forward_grad_embeddings(
                 self.model,
-                current_embed_filtered - grad_filtered,
+                self.classification_strategy(current_embed_filtered, grad_filtered),
                 norm=self.emb_norm,
                 log_info=log_info_iter,
                 tag=f'inverse_gen_iter_{iteration}'
             )
-
-            # Apply sign to logits
-            logits_pag_iter = logits_pag_iter * self.grad_logits_sign
 
             # Compute metrics if original tokens are provided
             if original_valid_tokens is not None:
@@ -259,7 +257,11 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
                 f'Expected grad_x_embed to be of shape (n\'={n_first}, {d=}), but got {grad_x_embed.shape}'
 
             # Forward pass to get the logits and probabilities
-            logits = forward_grad_embeddings(self.model, x_embed[batch.attention_mask == 1] - grad_x_embed)
+            pag_classification_tensor = self.classification_strategy(
+                x_embed[batch.attention_mask == 1],  # Only valid positions
+                grad_x_embed,
+            )
+            logits = forward_grad_embeddings(self.model, pag_classification_tensor)
             assert logits.shape == (n_first, vocab_size), \
                 f'Expected logits to be of shape (n\'={n_first}, {vocab_size=}), but got {logits.shape}'
 
@@ -609,3 +611,39 @@ class IdentityGradEmbeddingsModel(BaseLMModel):
             print("N-gram statistics preparation completed.")
         else:
             print("N-gram based initialization not enabled, skipping n-gram statistics computation.")
+
+
+class NegativeIdentityGradEmbeddingsModel(IdentityGradEmbeddingsModel):
+    """
+    A variant of IdentityGradEmbeddingsModel that classifies on x - grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradSubtractClassificationStrategy(),
+                         model_name='identity')
+
+
+class PositiveIdentityGradEmbeddingsModel(IdentityGradEmbeddingsModel):
+    """
+    A variant of IdentityGradEmbeddingsModel that classifies on x + grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradAdditionClassificationStrategy(),
+                         model_name='posidentity')
+
+
+class ValueIdentityGradEmbeddingsModel(IdentityGradEmbeddingsModel):
+    """
+    A variant of IdentityGradEmbeddingsModel that classifies on grad(x) only.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradValueClassificationStrategy(),
+                         model_name='gradidentity')

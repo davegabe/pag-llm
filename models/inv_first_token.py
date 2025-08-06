@@ -7,6 +7,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
+from models.classification_strategies import ClassificationStrategy, GradSubtractClassificationStrategy, \
+    GradAdditionClassificationStrategy, GradValueClassificationStrategy
 from models.common import forward_grad_embeddings, compute_top_k_accuracies
 
 
@@ -15,13 +17,16 @@ class InvFirstTokenModel(BaseLMModel):
         self,
         model: PreTrainedModel,
         tokenizer: PreTrainedTokenizerFast,
-            config: LLMPagConfig
+            config: LLMPagConfig,
+            model_name: str,
+            classification_strategy: ClassificationStrategy | str,
     ):
-        super().__init__('inv-first', model, tokenizer, config)
+        super().__init__(model_name, model, tokenizer, config)
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
         self.k_samples = 5
+        self.classification_strategy = ClassificationStrategy.from_name(classification_strategy)
 
     def _compute_losses(self, batch: BatchType) -> tuple:
         """
@@ -79,8 +84,8 @@ class InvFirstTokenModel(BaseLMModel):
             grad_x_embed = torch.autograd.grad(loss_ce, [x_embed], create_graph=create_graph)[0]
 
             # Forward pass to get the logits and probabilities
-            new_embed = x_embed[:, 0, :] - grad_x_embed[:, 0, :]
-            logits = forward_grad_embeddings(self.model, new_embed)
+            grad_x_embed = self.classification_strategy(x_embed[:, 0, :], grad_x_embed[:, 0, :])
+            logits = forward_grad_embeddings(self.model, grad_x_embed)
             
             # We want that gradients on the first token will reconstruct the original token
             loss_grads = F.cross_entropy(
@@ -131,7 +136,8 @@ class InvFirstTokenModel(BaseLMModel):
 
             if grad_x_embed is not None:
                 # Get the logits and probabilities
-                logits = forward_grad_embeddings(self.model, grad_x_embed[:, 0, :])
+                # Note that grad_x_embed is already the first token embedding, with the correct classification strategy applied
+                logits = forward_grad_embeddings(self.model, grad_x_embed)
 
                 # Get the top k indices
                 top_k_accuracies = compute_top_k_accuracies(inv_first_label, logits, self.k_samples, tag=prefix_tag)
@@ -162,3 +168,39 @@ class InvFirstTokenModel(BaseLMModel):
             batch_idx (int): The index of the batch.
         """
         return self.validation_step(batch, batch_idx, prefix_tag)
+
+
+class NegativeInvFirstTokenModel(InvFirstTokenModel):
+    """
+    A variant of InvFirstTokenModel that classifies on x - grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradSubtractClassificationStrategy(),
+                         model_name='inv-first')
+
+
+class PositiveInvFirstTokenModel(InvFirstTokenModel):
+    """
+    A variant of InvFirstTokenModel that classifies on x + grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradAdditionClassificationStrategy(),
+                         model_name='pos-inv-first')
+
+
+class ValueInvFirstTokenModel(InvFirstTokenModel):
+    """
+    A variant of InvFirstTokenModel that classifies on grad(x) only.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradValueClassificationStrategy(),
+                         model_name='grad-inv-first')

@@ -154,7 +154,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             input_ids[:, k] = original_k_token
 
             # Predict the k-th token, based on the gradients of the first token embeddings
-            logits = forward_grad_embeddings(lightning_module.model, grad_x_embed)
+            classification_tensor = lightning_module.classification_strategy(
+                x_embed[:, k, :], grad_x_embed
+            )
+            logits = forward_grad_embeddings(lightning_module.model, classification_tensor)
 
             # Compute the top-k accuracies
             grad_top_k_accuracies = compute_top_k_accuracies(

@@ -7,6 +7,8 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import LLMPagConfig
 from data.data_processor import BatchType
 from models.base_model import BaseLMModel
+from models.classification_strategies import ClassificationStrategy, GradSubtractClassificationStrategy, \
+    GradAdditionClassificationStrategy, GradValueClassificationStrategy
 from models.common import compute_top_k_accuracies, forward_grad_embeddings
 
 
@@ -25,8 +27,10 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
             model: PreTrainedModel,
             tokenizer: PreTrainedTokenizerFast,
             config: LLMPagConfig,
+            model_name: str,
+            classification_strategy: str | ClassificationStrategy,
     ):
-        super().__init__('bertlike', model, tokenizer, config)
+        super().__init__(model_name, model, tokenizer, config)
         self.hidden_layer_index = config.model.hidden_layer_index
         self.pag_classes = config.training.pag_classes  # Number of different next tokens to consider
         self.criterion = torch.nn.CrossEntropyLoss()
@@ -34,6 +38,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         self.lambda_loss_ce = config.training.lambda_loss_ce
         self.lambda_loss_pag = config.training.lambda_loss_pag
         self.warmup_pretrain_epochs = config.training.warmup_pretrain_epochs
+        self.classification_strategy = ClassificationStrategy.from_name(classification_strategy)
 
     @torch.no_grad()
     def _create_masked_input_ids(self, batch: BatchType) -> tuple[torch.Tensor, torch.Tensor]:
@@ -169,7 +174,7 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
 
             # Forward pass to get the logits and probabilities
             # Since we are using the gradients, we need to add the tokens we computed the gradients for ([PAD] token)
-            valid_masked_x_grads = self.tokenizer.pad_token_id - valid_masked_x_grads
+            valid_masked_x_grads = self.classification_strategy(self.tokenizer.pad_token_id, valid_masked_x_grads)
             valid_input_ids_predicted = forward_grad_embeddings(
                 self.model,
                 valid_masked_x_grads,
@@ -236,3 +241,39 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
     def test_step(self, batch: BatchType, batch_idx: int) -> torch.Tensor:
         with torch.inference_mode(mode=False):
             return self._step(batch, 'test')
+
+
+class NegativeMaskedIdentityGradEmbeddingsModel(MaskedIdentityGradEmbeddingsModel):
+    """
+    A variant of MaskedIdentityGradEmbeddingsModel that classifies on x - grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradSubtractClassificationStrategy(),
+                         model_name='bertlike')
+
+
+class PositiveMaskedIdentityGradEmbeddingsModel(MaskedIdentityGradEmbeddingsModel):
+    """
+    A variant of MaskedIdentityGradEmbeddingsModel that classifies on x + grad(x).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradAdditionClassificationStrategy(),
+                         model_name='posbertlike')
+
+
+class ValueMaskedIdentityGradEmbeddingsModel(MaskedIdentityGradEmbeddingsModel):
+    """
+    A variant of MaskedIdentityGradEmbeddingsModel that classifies on grad(x) only.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args,
+                         **kwargs,
+                         classification_strategy=GradValueClassificationStrategy(),
+                         model_name='gradbertlike')
