@@ -1,5 +1,4 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from transformers import PreTrainedModel
 
@@ -9,7 +8,7 @@ def forward_grad_embeddings(
         grad_x_embed: torch.Tensor,
         norm: torch.nn.Module = None,
         tag: str = 'undefined',
-        log_info: dict[str, torch.Tensor] = {},
+        log_info: dict[str, torch.Tensor] = None,
 ) -> torch.Tensor: 
     """
     Project the gradients of the embeddings to the vocabulary space using the head of the model.
@@ -24,6 +23,10 @@ def forward_grad_embeddings(
     Returns:
         logits (torch.Tensor): The logits of the model. [batch_size, seq_len, vocab_size]
     """
+    # Default argument
+    if log_info is None:
+        log_info = {}
+
     # Fallback to model's norm if not provided
     if norm is None:
         norm = model.model.norm
