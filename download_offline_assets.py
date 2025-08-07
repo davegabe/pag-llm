@@ -9,11 +9,10 @@ import sys
 from typing import Optional
 
 from datasets import load_dataset
-from transformers import AutoTokenizer
 from sentence_transformers import SentenceTransformer
-from hydra import compose, initialize_config_dir
+from transformers import AutoTokenizer
 
-from config import DatasetConfig
+from config import DatasetConfig, get_config
 
 
 def download_dataset(dataset_name: str, output_dir: pathlib.Path, splits: Optional[list[str]] = None) -> pathlib.Path:
@@ -129,8 +128,7 @@ def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) ->
     config_name = config_path.stem
     
     # Initialize Hydra with the config directory
-    with initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = compose(config_name=config_name)
+    cfg = get_config(config_name=config_name)
     
     downloaded_assets = {}
     
@@ -206,31 +204,26 @@ def main():
     print(f"Downloading assets from config: {args.config}")
     print(f"Output directory: {args.output_dir}")
     print()
-    
-    try:
-        # Download assets based on config
-        downloaded_assets = download_from_config(args.config, args.output_dir)
-        
-        # Download SentenceTransformer model
-        sentence_transformer_path = download_sentence_transformer(
-            args.sentence_transformer, 
-            args.output_dir
-        )
-        downloaded_assets['sentence_transformer'] = sentence_transformer_path
-        
-        if not downloaded_assets:
-            print("No assets were downloaded. Check your config file.")
-            return
-        
-        print("\nDownload summary:")
-        for asset_type, asset_path in downloaded_assets.items():
-            print(f"  {asset_type}: {asset_path}")
-                
-        print(f"\n✓ All assets downloaded successfully!")
-        
-    except Exception as e:
-        print(f"\n✗ Error during download: {e}")
-        sys.exit(1)
+
+    # Download assets based on config
+    downloaded_assets = download_from_config(args.config, args.output_dir)
+
+    # Download SentenceTransformer model
+    sentence_transformer_path = download_sentence_transformer(
+        args.sentence_transformer,
+        args.output_dir
+    )
+    downloaded_assets['sentence_transformer'] = sentence_transformer_path
+
+    if not downloaded_assets:
+        print("No assets were downloaded. Check your config file.")
+        return
+
+    print("\nDownload summary:")
+    for asset_type, asset_path in downloaded_assets.items():
+        print(f"  {asset_type}: {asset_path}")
+
+    print(f"\n✓ All assets downloaded successfully!")
 
 
 if __name__ == "__main__":
