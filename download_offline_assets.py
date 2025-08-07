@@ -124,7 +124,6 @@ def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) ->
         Dictionary mapping asset names to their local paths
     """
     config_path = config_path.resolve()
-    config_dir = config_path.parent
     config_name = config_path.stem
     
     # Initialize Hydra with the config directory

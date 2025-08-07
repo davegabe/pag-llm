@@ -42,6 +42,9 @@ dataset:
   local_tokenizer_path: 'offline_assets/tokenizers/DaveGabe_TinyStoriesV2_cleaned-voc2048-seq256-overlap25-bpe-tokenizer'
   local_sentence_transformer_path: 'offline_assets/sentence_transformers/all-MiniLM-L6-v2'
 
+  pretokenized_dataset_name: 'DaveGabe/TinyStoriesV2_cleaned-voc2048-seq256-overlap25'
+  pretrained_tokenizer_name: 'DaveGabe/TinyStoriesV2_cleaned-voc2048-seq256-overlap25-bpe-tokenizer'
+
   train_split: 'train'
   eval_split: 'validation'
   test_split: 'test'
