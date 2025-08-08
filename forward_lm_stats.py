@@ -84,6 +84,7 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
     print()
 
     train_bigram_file = cfg.model.output_dir / f'train_bigram_{cfg.model.vocab_size}_full.pt'
+    print(f' - Bigram file: {train_bigram_file}')
     if train_bigram_file.exists():
         # Load the bigram from the file
         reverse_bigram, bigram_counts = load_bigram_from_file(train_bigram_file)
