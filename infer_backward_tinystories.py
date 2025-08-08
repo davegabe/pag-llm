@@ -768,6 +768,11 @@ def main(cfg: CustomLLMPagConfig):
         use_init = 'bigram'
     else:
         raise ValueError(f"Unsupported training method: {cfg.training.method}. ")
+
+    ckpt_path = cfg.model.checkpoint_path
+    if isinstance(ckpt_path, str):
+        ckpt_path = Path(ckpt_path)
+    baseline_ckpt_path = ckpt_path.parent / 'best-base.ckpt'
     
     run_evaluation(device='cuda:0',
                    k_samples=None,  # How many samples to take from the dataset (set to None for all samples)
@@ -775,8 +780,8 @@ def main(cfg: CustomLLMPagConfig):
                    beam_size=5,
                    prefix_len=20,  # How many tokens to predict
                    use_init=use_init,
-                   ckpt_file=cfg.model.checkpoint_path,
-                   baseline_ckpt_file='baseline.ckpt',
+                   ckpt_file=str(ckpt_path.resolve()),
+                   baseline_ckpt_file=str(baseline_ckpt_path.resolve()),
                    cfg=cfg)
 
 
