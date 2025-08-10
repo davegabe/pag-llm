@@ -422,9 +422,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         ckpt_file=ckpt_file,
     )
 
+    external_llm = str(cfg.model.local_external_llm_path) or cfg.model.external_llm
+
     # Initialize the comprehensive evaluator with the forward model
     # For forward coherence, we use the same model (could use a different forward model if available)
-    evaluator = BackwardInferenceEvaluator(forward_model=lightning_module)
+    evaluator = BackwardInferenceEvaluator(forward_model=lightning_module, external_llm=external_llm)
 
     # The baseline model is used in the bigram-only inversion.
     # This is necessary because the bigram-only inversion uses the model to compute the perplexity of the generated sentences.
@@ -525,6 +527,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             
             # Get original prefix text for semantic similarity comparison
             original_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, original_prefix_ids)
+            predicted_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, suffix_input_ids)
             
             # Finally, print the predicted sentence
             predicted_stats = print_text_stats(
@@ -547,7 +550,9 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 true_suffix=true_suffix_ids,
                 reference_prefix_mask=original_prefix_mask,
                 generated_prefix_mask=generated_prefix_mask,
-                suffix_mask=true_suffix_mask
+                suffix_mask=true_suffix_mask,
+                predicted_overall_text=predicted_prefix_text,
+                original_overall_text=original_prefix_text,
             )
             comprehensive_sample_metrics.append(comprehensive_metrics)
             
@@ -715,6 +720,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     print(f"\n--- Forward Coherence Metrics ---")
     print(f"Mean Forward Coherence PPL: {aggregated_comprehensive_metrics.get('mean_forward_coherence_ppl', float('inf')):.2f}")
     print(f"Mean Forward Coherence Loss: {aggregated_comprehensive_metrics.get('mean_forward_coherence_loss', float('inf')):.4f}")
+    print(
+        f"Mean 3rd-Party Original txt PPL: {aggregated_comprehensive_metrics.get('original_perplexity', float('inf')):.2f}")
+    print(
+        f"Mean 3rd-Party Predicted txt PPL: {aggregated_comprehensive_metrics.get('predicted_perplexity', float('inf')):.2f}")
+
     
     if total_bigram_ppl is not None:
         print(f"\n--- Bigram Baseline Comparison ---")

@@ -112,6 +112,33 @@ def download_sentence_transformer(model_name: str, output_dir: pathlib.Path) -> 
         raise
 
 
+def download_external_llm(model_name: str, model_path: pathlib.Path) -> pathlib.Path:
+    """
+    Download an external LLM model to local directory.
+
+    Args:
+        model_name: Name of the external LLM model
+        model_path: Full local path to save the model
+
+    Returns:
+        Path to the downloaded model directory
+    """
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+
+    print(f"Downloading external LLM '{model_name}' to {model_path}")
+
+    try:
+        # Placeholder for actual LLM download logic
+        # This should be replaced with the actual download code for the specific LLM
+        print(f"✓ External LLM '{model_name}' downloaded successfully (placeholder)")
+
+        return model_path
+
+    except Exception as e:
+        print(f"✗ Error downloading external LLM '{model_name}': {e}")
+        raise
+
+
 def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) -> dict[str, pathlib.Path]:
     """
     Download datasets and tokenizers specified in a config file.
@@ -172,6 +199,13 @@ def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) ->
                 output_dir
             )
             downloaded_assets['tokenizer'] = tokenizer_path
+
+    # Check if external LLM is specified
+    if hasattr(cfg, 'model') and cfg.model:
+        model_name = cfg.model.external_llm
+        local_path = pathlib.Path(cfg.model.local_external_llm_path)
+        download_external_llm(model_name, local_path)
+        downloaded_assets['external_llm'] = local_path
     
     return downloaded_assets
 

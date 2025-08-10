@@ -63,6 +63,10 @@ class CustomModelConfig:
     output_dir: pathlib.Path
     hidden_layer_index: int
 
+    # Perplexity model parameters
+    external_llm: str | None = None  # Name of the external LLM to use for perplexity
+    local_external_llm_path: pathlib.Path | None = None  # Path to the local LLM if available
+
     # For evaluating a custom model
     checkpoint_path: pathlib.Path | None = None  # Path to the model checkpoint if available
 
