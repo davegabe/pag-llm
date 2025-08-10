@@ -5,6 +5,7 @@ from transformers.modeling_outputs import CausalLMOutputWithPast
 
 from config import LLMPagConfig
 from data.data_processor import BatchType
+from models.classification_strategies import GradSubtractClassificationStrategy
 from models.common import compute_top_k_accuracies
 
 
@@ -20,6 +21,7 @@ class BaseLMModel(pl.LightningModule):
         self.tokenizer = tokenizer
         self.config = config
         self.save_hyperparameters(ignore=["model", "tokenizer"])
+        self.classification_strategy = GradSubtractClassificationStrategy()
 
     def configure_optimizers(self):
         optimizer = torch.optim.AdamW(
