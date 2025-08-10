@@ -8,6 +8,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.nn import CrossEntropyLoss
 from tqdm import tqdm
+from transformers import PreTrainedTokenizerBase
 
 from config import CustomLLMPagConfig, apply_config
 from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
@@ -495,7 +496,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 f'suffix_attention_mask shape mismatch: {suffix_attention_mask.shape} != ({t - prefix_len},)'
 
             suffix_tokens_len = suffix_input_ids.size(-1)
-            suffix_text = lightning_module.tokenizer.decode(suffix_input_ids, skip_special_tokens=True)
+            suffix_text = pretty_decode_tokens(lightning_module.tokenizer, suffix_input_ids)
 
             # Iteratively replace the first token, in an autoregressive manner
             while suffix_input_ids.size(-1) < t:
@@ -523,7 +524,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
             
             # Get original prefix text for semantic similarity comparison
-            original_prefix_text = lightning_module.tokenizer.decode(original_prefix_ids, skip_special_tokens=True)
+            original_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, original_prefix_ids)
             
             # Finally, print the predicted sentence
             predicted_stats = print_text_stats(
@@ -734,7 +735,7 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
     prefix_ids = input_ids[:prefix_tokens_len]
     prefix_attn_mask = attention_mask[:prefix_tokens_len]
-    prefix_text = lightning_module.tokenizer.decode(prefix_ids, skip_special_tokens=True)
+    prefix_text = pretty_decode_tokens(lightning_module.tokenizer, prefix_ids)
     prefix_ppl = get_batch_perplexity(lightning_module, prefix_ids, prefix_attn_mask).item()
 
     token_duplications = count_repeated_tokens(prefix_ids[None, :], prefix_attn_mask[None, :]).item()
@@ -752,6 +753,14 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
         'token_duplications': token_duplications,
         'prefix_text': prefix_text
     }
+
+
+def pretty_decode_tokens(tokenizer: PreTrainedTokenizerBase, input_ids: torch.Tensor) -> str:
+    """
+    Decode the input IDs to a human-readable string, skipping special tokens.
+    """
+    decoded_text = tokenizer.decode(input_ids, skip_special_tokens=True)
+    return decoded_text.replace(' ', '').replace('▁', ' ')
 
 
 @apply_config('inv-first-tiny-train-small')
