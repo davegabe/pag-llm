@@ -598,6 +598,18 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             sample_metric['original'] = original_stats
             total_original_ppl += original_stats['overall_ppl']
 
+            # Limit the suffix text length to avoid too long lines
+            display_suffix_text_len = 150
+            display_suffix_text = suffix_text[:display_suffix_text_len] \
+                                  + ('...' if len(suffix_text) > display_suffix_text_len else '')
+
+            # Print the suffix text with formatting
+            if sys.stdout.isatty():
+                print(f"\033[1m[...]\033[0m {display_suffix_text}")
+            else:
+                print(f"[...] {display_suffix_text}")
+            print()
+
             # Log sample-level metrics to WandB (only 10 samples for brevity)
             if sample_idx % (total_samples // 10) == 0 or sample_idx == total_samples - 1:
                 sample_wandb_metrics = {
@@ -635,23 +647,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                         f'sample_{sample_idx}/bigram_text': bigram_stats['prefix_text'],
                     })
 
-                # Limit the suffix text length to avoid too long lines
-                display_suffix_text_len = 150
-                display_suffix_text = suffix_text[:display_suffix_text_len] \
-                                    + ('...' if len(suffix_text) > display_suffix_text_len else '')
-                
-                # Print the suffix text with formatting
-                if sys.stdout.isatty():
-                    print(f"\033[1m[...]\033[0m {display_suffix_text}")
-                else:
-                    print(f"[...] {display_suffix_text}")
-
                 # Add also log of the suffix text
                 wandb_logger.experiment.log({
                     f'sample_{sample_idx}/suffix_text': suffix_text,
                 })
-
-                print()
         
         # Update counters at the end of each batch
         global_sample_idx += batch_size
