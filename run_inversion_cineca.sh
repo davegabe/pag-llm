@@ -47,5 +47,6 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
+export HF_EVALUATE_OFFLINE=1
 
 srun python infer_backward_tinystories.py "$@"

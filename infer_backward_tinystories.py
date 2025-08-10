@@ -526,7 +526,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
             
             # Get original prefix text for semantic similarity comparison
-            original_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, original_prefix_ids)
+            original_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, sample_input_ids)
             predicted_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, suffix_input_ids)
             
             # Finally, print the predicted sentence

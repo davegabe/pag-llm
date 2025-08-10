@@ -8,9 +8,10 @@ import pathlib
 import sys
 from typing import Optional
 
+import evaluate
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, AutoModel
 
 from config import DatasetConfig, get_config
 
@@ -128,9 +129,15 @@ def download_external_llm(model_name: str, model_path: pathlib.Path) -> pathlib.
     print(f"Downloading external LLM '{model_name}' to {model_path}")
 
     try:
-        # Placeholder for actual LLM download logic
-        # This should be replaced with the actual download code for the specific LLM
-        print(f"✓ External LLM '{model_name}' downloaded successfully (placeholder)")
+        # Download the model using transformers
+        model = AutoModel.from_pretrained(model_name)
+        model.save_pretrained(str(model_path))
+
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        tokenizer.save_pretrained(str(model_path))
+        print(f"✓ External LLM '{model_name}' downloaded successfully")
+
+        evaluate.load('perplexity', module_type='metric')  # Ensure the metric is loaded for perplexity evaluation
 
         return model_path
 

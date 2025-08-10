@@ -276,11 +276,12 @@ class BackwardInferenceEvaluator:
         Returns:
             Dictionary containing perplexity metrics
         """
+        # Limit the length of the texts to avoid excessive computation
+        # Leave only the first 50 words
+        predicted_text = ' '.join(predicted_text.split()[:50])
+        original_text = ' '.join(original_text.split()[:50])
         sentences = [predicted_text, original_text]
-        print('==== THIRD PARTY PERPLEXITY EVALUATION ====')
-        print(f'Predicted: {predicted_text}')
-        print(f'Original: {original_text}')
-        print('============================================')
+
         predicted_ppl, original_ppl = self.perplexity_evaluator.compute(
             model_id=self.external_llm,
             predictions=sentences,
