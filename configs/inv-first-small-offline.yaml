@@ -32,6 +32,9 @@ model:
   max_position_embeddings: 256
   output_dir: '${path:checkpoints/tinystories-pretokenized-small}'
 
+  external_llm: 'meta-llama/Llama-3.2-1B'
+  local_external_llm_path: 'offline_assets/models/meta-llama_Llama-3.2-1B'
+
 dataset:
   _target_: config.DatasetConfig
   name: 'fhswf/TinyStoriesV2_cleaned' # not used when use_pretokenized is True
@@ -41,6 +44,9 @@ dataset:
   local_dataset_path: 'offline_assets/datasets/DaveGabe_TinyStoriesV2_cleaned-inv-first-voc2048-seq256-overlap25'
   local_tokenizer_path: 'offline_assets/tokenizers/DaveGabe_TinyStoriesV2_cleaned-inv-first-voc2048-seq256-overlap25-bpe-tokenizer'
   local_sentence_transformer_path: 'offline_assets/sentence_transformers/all-MiniLM-L6-v2'
+
+  pretokenized_dataset_name: 'DaveGabe/TinyStoriesV2_cleaned-inv-first-voc2048-seq256-overlap25'
+  pretrained_tokenizer_name: 'DaveGabe/TinyStoriesV2_cleaned-inv-first-voc2048-seq256-overlap25-bpe-tokenizer'
 
   train_split: 'train'
   eval_split: 'validation'
