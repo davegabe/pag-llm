@@ -3,11 +3,11 @@ import sys
 from pathlib import Path
 
 import torch
+from evaluate.utils import logging
 from lightning.pytorch.loggers import WandbLogger
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from torch.nn import CrossEntropyLoss
-from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from config import CustomLLMPagConfig, apply_config
@@ -49,8 +49,8 @@ def compute_semantic_similarity(text1: str, text2: str, model: SentenceTransform
     """
     if not text1.strip() or not text2.strip():
         return 0.0
-    
-    embeddings = model.encode([text1, text2])
+
+    embeddings = model.encode([text1, text2], show_progress_bar=False)
     similarity = cosine_similarity([embeddings[0]], [embeddings[1]])[0][0]
     return float(similarity)
 
@@ -458,7 +458,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     
     # Iterate over entire test dataset
     total_samples = len(data_module.test_dataloader().dataset)
-    for batch_idx, batch in tqdm(enumerate(data_module.test_dataloader()), desc='Evaluating'):
+    for batch_idx, batch in enumerate(data_module.test_dataloader()):
         batch = batch.to(torch.device(device))
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
@@ -484,8 +484,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             f'input_ids shape mismatch: {input_ids.shape} != ({batch_size}, {t})'
         assert attention_mask.shape == (batch_size, t), \
             f'attention_mask shape mismatch: {attention_mask.shape} != ({batch_size}, {t})'
-        
-        print(f"Processing batch {batch_idx + 1}, samples {global_sample_idx} to {global_sample_idx + batch_size - 1}")
+
+        # print(f"Processing batch {batch_idx + 1}, samples {global_sample_idx} to {global_sample_idx + batch_size - 1}")
 
         for local_sample_idx, (sample_input_ids, sample_attention_mask) in enumerate(zip(input_ids, attention_mask)):
             sample_idx = global_sample_idx + local_sample_idx
@@ -775,6 +775,8 @@ def pretty_decode_tokens(tokenizer: PreTrainedTokenizerBase, input_ids: torch.Te
 
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
+    logging.disable_progress_bar()
+
     if "inv-first" in cfg.training.method:
         print(f"Method {cfg.training.method} need to use BOS for initialization, ")
         use_init = 'bos'
