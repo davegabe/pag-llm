@@ -335,6 +335,9 @@ def run_gcg_with_convergence_logging(gcg: gcg_algorithm.GCG, dataset: TextDatase
     })
     
     # Save final results
+    if not gcg_output_file.parent.exists():
+        gcg_output_file.parent.mkdir(parents=True, exist_ok=True)
+    print(f"Saving GCG results to {gcg_output_file}")
     with gcg_output_file.open('w') as f:
         json.dump([r.to_dict() for r in gcg_results], f, indent=4)
     print(f"Saved GCG results to {gcg_output_file}")

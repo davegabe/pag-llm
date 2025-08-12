@@ -299,6 +299,7 @@ def load_and_process_dataset(
                 max_length,
             )
         else:
+            raise ValueError(f"Test split '{dataset_config.test_split}' not found in pre-tokenized dataset")
             test_dataset = val_dataset
     else:
         # Use regular text dataset processing
