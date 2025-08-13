@@ -5,7 +5,7 @@ lightning_logs/
 downloaded_dataset/
 .env
 .venv/
-wandb/
+**/wandb/
 *.SLURMout
 /faster-gcg/
 offline_assets/
