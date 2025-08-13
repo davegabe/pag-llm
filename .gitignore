@@ -6,7 +6,8 @@ downloaded_dataset/
 .env
 .venv/
 **/wandb/
-*.SLURMout
+**/inverse_lm*.SLURMerr
+**/inverse_lm*.SLURMout
 /faster-gcg/
 offline_assets/
 best-checkpoints/
