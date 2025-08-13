@@ -458,7 +458,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     
     # Iterate over entire test dataset
     total_samples = len(data_module.test_dataloader().dataset)
-    for batch_idx, batch in enumerate(data_module.test_dataloader()):
+    for batch_idx, batch in enumerate(data_module.test_dataloader(shuffle=True)):
         batch = batch.to(torch.device(device))
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
