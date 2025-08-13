@@ -794,7 +794,7 @@ def main(cfg: CustomLLMPagConfig):
         ckpt_path = Path(ckpt_path)
     baseline_ckpt_path = ckpt_path.parent / 'best-base.ckpt'
 
-    run_evaluation(device='cpu',
+    run_evaluation(device='cuda:0',
                    k_samples=20_000,  # How many samples to take from the dataset (set to None for all samples)
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=5,
