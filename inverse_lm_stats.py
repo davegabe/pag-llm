@@ -123,6 +123,7 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
 def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: CustomLLMPagConfig, batch_size: int):
     # Load the samples
     inference_result: BackwardInferenceResult
+    print('Loading precomputed inference results from:', precomputed_inference_json_path)
     with open(precomputed_inference_json_path, 'r', encoding='utf-8') as f:
         inference_result = BackwardInferenceResult.from_dict(json.load(f))
 

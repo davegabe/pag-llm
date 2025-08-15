@@ -49,5 +49,8 @@ export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 export HF_EVALUATE_OFFLINE=1
 
+echo "===== Starting Inversion Execution ====="
 srun python infer_backward_tinystories.py "$@"
+echo
+echo "===== Starting Inversion Evaluation Statistics ====="
 srun python inverse_lm_stats.py "$@"

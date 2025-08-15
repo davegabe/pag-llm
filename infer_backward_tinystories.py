@@ -309,6 +309,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         print(f'Output file {output_file} already exists. Skipping evaluation.')
         return
 
+    print('Results will be saved to:', output_file)
+
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(cfg=cfg, device=device,
                                                                                       use_init=use_init,
                                                                                       ckpt_file=ckpt_file, )
@@ -411,6 +413,8 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         total_samples_processed += batch_size
 
     # At the end of the evaluation, save all samples to the output file
+    print(f'Processed {total_samples_processed} samples in total.')
+    print(f'Saving results to {output_file}...')
     with open(output_file, 'w', encoding='utf-8') as f:
         json_result = BackwardInferenceResult(samples=all_samples_processed, ckpt_file=ckpt_file, prefix_len=prefix_len,
                                               use_init=use_init, baseline_ckpt_file=baseline_ckpt_file,
@@ -471,7 +475,7 @@ def main(cfg: CustomLLMPagConfig):
     baseline_ckpt_path = ckpt_path.parent / 'best-base.ckpt'
 
     run_evaluation(device='cuda:0',
-                   k_samples=50,  # How many samples to take from the dataset (set to None for all samples)
+                   k_samples=50,  # How many samples to take from the dataset (set to None for all samples)  # FIXME
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=5,
                    prefix_len=20,  # How many tokens to predict
