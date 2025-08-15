@@ -334,7 +334,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     all_samples_processed: list[BackwardInferenceSampleResult] = []
 
     # Iterate over entire test dataset
-    for batch_idx, batch in tqdm(enumerate(data_module.test_dataloader()), desc='Processing inversion batches'):
+    for batch_idx, batch in enumerate(tqdm(data_module.test_dataloader(), desc='Processing inversion batches')):
         batch = batch.to(torch.device(device))
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
