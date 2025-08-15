@@ -103,7 +103,14 @@ class BackwardInferenceResult:
             BackwardInferenceResult: An instance of the result.
         """
         return BackwardInferenceResult(
-            samples=[BackwardInferenceSampleResult.from_dict(sample) for sample in data['samples']]
+            samples=[BackwardInferenceSampleResult.from_dict(sample) for sample in data['samples']],
+            ckpt_file=data['ckpt_file'],
+            prefix_len=data['prefix_len'],
+            use_init=data['use_init'],
+            baseline_ckpt_file=data.get('baseline_ckpt_file'),
+            k_samples=data['k_samples'],
+            skip_prefix_tokens=data['skip_prefix_tokens'],
+            beam_size=data['beam_size'],
         )
 
     def to_dict(self) -> dict:
@@ -114,5 +121,12 @@ class BackwardInferenceResult:
             dict: A dictionary representation of the result.
         """
         return {
-            'samples': [sample.to_dict() for sample in self.samples]
+            'samples': [sample.to_dict() for sample in self.samples],
+            'ckpt_file': self.ckpt_file,
+            'prefix_len': self.prefix_len,
+            'use_init': self.use_init,
+            'baseline_ckpt_file': self.baseline_ckpt_file,
+            'k_samples': self.k_samples,
+            'skip_prefix_tokens': self.skip_prefix_tokens,
+            'beam_size': self.beam_size,
         }
