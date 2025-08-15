@@ -1,14 +1,38 @@
+import dataclasses
+import json
 import pathlib
-from collections import defaultdict
+from pathlib import Path
+from typing import Any
 
 import torch
+from evaluate.utils import logging
+from lightning.pytorch.loggers import WandbLogger
+from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
-from data.data_processor import BatchType
+from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
 from instantiate import load_model_from_checkpoint
-from models.common import compute_top_k_accuracies, forward_grad_embeddings
+from utils.backward_inference_result import BackwardInferenceResult
+
+
+def load_semantic_model(cfg: CustomLLMPagConfig) -> SentenceTransformer:
+    """
+    Load SentenceTransformer model from local path if available, otherwise from HuggingFace.
+
+    Args:
+        cfg: Configuration object containing local model path if available
+
+    Returns:
+        SentenceTransformer: Loaded model
+    """
+    if cfg.dataset.local_sentence_transformer_path is not None:
+        print(f"Loading SentenceTransformer model from local path: {cfg.dataset.local_sentence_transformer_path}")
+        return SentenceTransformer(cfg.dataset.local_sentence_transformer_path)
+    else:
+        print("Loading SentenceTransformer model from HuggingFace: sentence-transformers/all-MiniLM-L6-v2")
+        return SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
 
 
 def load_bigram_from_file(bigram_file: pathlib.Path) -> tuple[torch.Tensor, torch.Tensor] | None:
@@ -52,10 +76,8 @@ def build_and_save_bigram(train_dataloader: DataLoader, vocab_size: int, bigram_
 
     # Save the bigram to the file
     bigram_file.parent.mkdir(exist_ok=True, parents=True)
-    torch.save({
-        'distribution_after_token': distribution_after_token,
-        'bigram': torch_bigram,
-    }, str(bigram_file.resolve()))
+    torch.save({'distribution_after_token': distribution_after_token, 'bigram': torch_bigram, },
+               str(bigram_file.resolve()))
 
     return torch_bigram, distribution_after_token
 
@@ -65,13 +87,9 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
 
     # Decide the strategy for the init
     allowed_init = {'bigram', 'random', 'pad', 'bos'}
-    assert use_init in allowed_init, \
-        f'Invalid initialization strategy: {use_init}. Allowed values are: {allowed_init}'
+    assert use_init in allowed_init, f'Invalid initialization strategy: {use_init}. Allowed values are: {allowed_init}'
 
-    lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(
-        ckpt_file,
-        cfg,
-    )
+    lightning_module, data_module, module_name, cfg = load_model_from_checkpoint(ckpt_file, cfg, )
     lightning_module.to(device)
 
     model_class_name = lightning_module.__class__.__name__
@@ -89,8 +107,8 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
         reverse_bigram, bigram_counts = load_bigram_from_file(train_bigram_file)
     else:
         # Build the bigram from the training data
-        reverse_bigram, bigram_counts = build_and_save_bigram(data_module.train_dataloader(),
-                                                              cfg.model.vocab_size, train_bigram_file)
+        reverse_bigram, bigram_counts = build_and_save_bigram(data_module.train_dataloader(), cfg.model.vocab_size,
+                                                              train_bigram_file)
     reverse_bigram, bigram_counts = map(lambda x: x.to(device), (reverse_bigram, bigram_counts))
 
     # To always use special token as the filler for the unknown token:
@@ -102,108 +120,144 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
     return lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts
 
 
-def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, cfg: CustomLLMPagConfig):
-    lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts = init_evaluation(
-        cfg=cfg,
-        device=device,
-        use_init=use_init,
-        ckpt_file=ckpt_file,
-    )
+def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: CustomLLMPagConfig, batch_size: int):
+    # Load the samples
+    inference_result: BackwardInferenceResult
+    with open(precomputed_inference_json_path, 'r', encoding='utf-8') as f:
+        inference_result = BackwardInferenceResult.from_dict(json.load(f))
 
-    # Do a forward testing
-    # trainer = Trainer(devices='0,')
-    # trainer.validate(lightning_module, data_module.test_dataloader())
+    use_init = inference_result.use_init
+    ckpt_file = inference_result.ckpt_file
+    prefix_len = inference_result.prefix_len
+    baseline_ckpt_file = inference_result.baseline_ckpt_file
+    k_samples = inference_result.k_samples
+    skip_prefix_tokens = inference_result.skip_prefix_tokens
+    beam_size = inference_result.beam_size
 
-    overall_accuracy = defaultdict(int)
+    # Setup WandB logger for backward inference evaluation
+    run_name = f"backward-{cfg.training.method}-{use_init}"
+    tags = ["backward", cfg.training.method, cfg.dataset.name, use_init]
+    if cfg.training.method == "pag-hidden":
+        run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
+        tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
+
+    # Add checkpoint info to tags if available
+    if ckpt_file:
+        checkpoint_name = Path(ckpt_file).stem
+        tags.append(f"checkpoint-{checkpoint_name}")
+
+    wandb_logger = WandbLogger(entity='pag-llm-team', project='pag-llm-backward-inference',
+                               # Separate project for backward inference runs
+                               name=run_name, tags=tags, config={**dataclasses.asdict(cfg),
+                                                                 'evaluation_params': {'device': device,
+                                                                                       'prefix_len': prefix_len,
+                                                                                       'use_init': use_init,
+                                                                                       'ckpt_file': ckpt_file,
+                                                                                       'baseline_ckpt_file': baseline_ckpt_file,
+                                                                                       'k_samples': k_samples,
+                                                                                       'skip_prefix_tokens': skip_prefix_tokens,
+                                                                                       'beam_size': beam_size, }}, )
+
+    # Initialize semantic similarity model
+    print("Loading SentenceTransformer model for semantic similarity...")
+    semantic_model = load_semantic_model(cfg)
+
+    lightning_module, _, _, _, _ = init_evaluation(cfg=cfg, device=device, use_init=use_init, ckpt_file=ckpt_file, )
+
+    external_llm = str(cfg.model.local_external_llm_path) or cfg.model.external_llm
+
+    # Initialize the comprehensive evaluator with the forward model
+    # For forward coherence, we use the same model (could use a different forward model if available)
+    evaluator = BackwardInferenceEvaluator(forward_model=lightning_module, external_llm=external_llm,
+                                           semantic_model=semantic_model)
+
     lightning_module.eval()
 
-    for batch in tqdm(data_module.test_dataloader(), desc='Inverse LM evaluation'):
-        batch: BatchType = batch.to(torch.device(device))
-        input_ids, attention_mask, shift_labels = batch.input_ids, batch.attention_mask, batch.shift_labels
+    # Initialize metrics tracking (new evaluation metrics)
+    all_ilm_generated_metrics: list[dict] = []
+    all_bigram_generated_metrics: list[dict] = []
 
-        for k in range(prefix_len - 1, -1, -1):
-            # Do a forward pass,
-            # letting the model see only the tokens after k-th.
-            # The model must predict token k-th
-            # To do that, we need to mask the k-th token with [PAD]
-            original_k_token = input_ids[:, k].clone()
+    for sample in inference_result.samples:
+        # Create tensors for the list[int] tokens
+        original_prefix_tokens = torch.tensor(sample.original_prefix_tokens, dtype=torch.long, device=device)
+        predicted_prefix_tokens = torch.tensor(sample.predicted_prefix_tokens, dtype=torch.long, device=device)
+        suffix_tokens = torch.tensor(sample.suffix_tokens, dtype=torch.long, device=device)
 
-            # Replace the k-th token with [PAD]
-            # input_ids[:, k] = lightning_module.tokenizer.pad_token_id
-            ## Use the bigram
-            next_token = input_ids[:, k + 1]
-            input_ids[:, k] = reverse_bigram[next_token]
+        # Get the strings of text
+        original_prefix_text = sample.original_prefix_text
+        predicted_prefix_text = sample.predicted_prefix_text
+        suffix_text = sample.suffix_text
 
-            ## To use a random initialization for the unknown token:
-            if use_init == 'random':
-                input_ids[:, k] = torch.randint_like(input_ids[:, k], 0, lightning_module.tokenizer.vocab_size)
+        ilm_generated_metrics = evaluator.compute_comprehensive_metrics(reference_prefix=original_prefix_tokens,
+                                                                        generated_prefix=predicted_prefix_tokens,
+                                                                        true_suffix=suffix_tokens,
+                                                                        reference_prefix_mask=torch.ones_like(
+                                                                            original_prefix_tokens),
+                                                                        generated_prefix_mask=torch.ones_like(
+                                                                            predicted_prefix_tokens),
+                                                                        suffix_mask=torch.ones_like(suffix_tokens),
+                                                                        predicted_overall_text=predicted_prefix_text,
+                                                                        original_overall_text=original_prefix_text,
+                                                                        suffix_text=suffix_text, )
+        all_ilm_generated_metrics.append(ilm_generated_metrics)
 
-            # Get the embeddings of X (with the k-th token replaced with [PAD])
-            x_embed = lightning_module.model.get_input_embeddings()(input_ids).detach()
-            x_embed.requires_grad_(True)
+        if sample.bigram_text:
+            bigram_tokens = torch.tensor(sample.bigram_tokens, dtype=torch.long, device=device)
+            bigram_text = sample.bigram_text
 
-            outputs = lightning_module.model(
-                inputs_embeds=x_embed[:, k:],
-                attention_mask=attention_mask[:, k:],
-                labels='dummy',
-                shift_labels=shift_labels[:, k:].contiguous(),
-                # Required by .view(-1) in PyTorch loss_utils.py internals
-            )
-            grad_x_embed = torch.autograd.grad(outputs.loss, [x_embed], create_graph=False)[0][:, k]
+            bigram_generated_metrics = evaluator.compute_comprehensive_metrics(reference_prefix=original_prefix_tokens,
+                                                                               generated_prefix=bigram_tokens,
+                                                                               true_suffix=suffix_tokens,
+                                                                               reference_prefix_mask=torch.ones_like(
+                                                                                   original_prefix_tokens),
+                                                                               generated_prefix_mask=torch.ones_like(
+                                                                                   bigram_tokens),
+                                                                               suffix_mask=torch.ones_like(
+                                                                                   suffix_tokens),
+                                                                               predicted_overall_text=bigram_text,
+                                                                               original_overall_text=original_prefix_text,
+                                                                               suffix_text=suffix_text, )
+            all_bigram_generated_metrics.append(bigram_generated_metrics)
 
-            # Reset the original k-th token
-            input_ids[:, k] = original_k_token
+    # Aggregate comprehensive metrics
+    aggregated_comprehensive_metrics: dict[str, Any] = aggregate_metrics(all_ilm_generated_metrics)
 
-            # Predict the k-th token, based on the gradients of the first token embeddings
-            classification_tensor = lightning_module.classification_strategy(
-                x_embed[:, k, :], grad_x_embed
-            )
-            logits = forward_grad_embeddings(lightning_module.model, classification_tensor)
+    # Add an "ilm/" prefix to all the keys
+    aggregated_comprehensive_metrics = {'ilm/' + k: v for k, v in aggregated_comprehensive_metrics.items()}
 
-            # Compute the top-k accuracies
-            grad_top_k_accuracies = compute_top_k_accuracies(
-                inv_first_label=original_k_token,
-                logits=logits,
-                k_samples=4,
-                tag='test_inverse_lm',
-            )
+    if all_bigram_generated_metrics:
+        # Use a different prefix for bigram metrics (e.g., "bigram/")
+        aggregated_bigram_metrics = aggregate_metrics(all_bigram_generated_metrics)
+        aggregated_comprehensive_metrics.update({'bigram/' + k: v for k, v in aggregated_bigram_metrics.items()})
 
-            # Compute the top-k accuracies of the bigram
-            if use_init == 'bigram':
-                bigram_logits = bigram_counts[next_token].float()
-                bigram_top_k_accuracies = compute_top_k_accuracies(
-                    inv_first_label=original_k_token,
-                    logits=bigram_logits,
-                    k_samples=4,
-                    tag='test_bigram',
-                )
+    wandb_logger.experiment.log(aggregated_comprehensive_metrics)
 
-                # Combine the accuracies to be logged later on
-                top_k_accuracies = bigram_top_k_accuracies | grad_top_k_accuracies  # Python 3.9+ dict union
-            else:
-                top_k_accuracies = grad_top_k_accuracies
-
-            top_k_accuracies = {k: v for k, v in top_k_accuracies.items() if '/top_' in k}
-            for top_k_key, accuracy in top_k_accuracies.items():
-                overall_accuracy[(top_k_key, k)] += round((accuracy * batch.input_ids.size(0)).item())
-
-    # Compute the overall accuracy
-    output_file = cfg.model.output_dir / f'inverse_lm_accuracy_{model_class_name}_{use_init}_{cfg.model.vocab_size}.txt'
-    with output_file.open('w') as f:
-        for top_k_key, correct_samples in overall_accuracy.items():
-            top_k_accuracy = correct_samples / len(data_module.test_dataset)
-            display_string = f'{top_k_key}: {top_k_accuracy:.2%}'
-            print(display_string)
-            f.write(display_string)
+    # Finish WandB run
+    wandb_logger.experiment.finish()
 
 
-@apply_config('inv-first-tiny-train')
+@apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
-    run_evaluation(device='cuda:2',
-                   prefix_len=5,
-                   use_init='random',
-                   ckpt_file='tinystories_identity_grad_norm__qp6q1mop.ckpt',
-                   cfg=cfg)
+    logging.disable_progress_bar()
+
+    if "inv-first" in cfg.training.method:
+        print(f"Method {cfg.training.method} need to use BOS for initialization, ")
+        use_init = 'bos'
+    elif "bert-like" in cfg.training.method or "pag-mix-identity-score-embeddings" in cfg.training.method:
+        print(f"Method {cfg.training.method} need to use PAD for initialization, ")
+        use_init = 'pad'
+    elif "identity-grad" in cfg.training.method or cfg.training.method == "base":
+        print(f"Method {cfg.training.method} need to use PAG for initialization, ")
+        use_init = 'bigram'
+    else:
+        raise ValueError(f"Unsupported training method: {cfg.training.method}. ")
+
+    output_file = f'backward_inference-{cfg.training.method}-{use_init}.json'
+
+    run_evaluation(device='cuda:0',
+                   precomputed_inference_json_path=f'{cfg.model.output_dir}/{output_file}',
+                   cfg=cfg,
+                   batch_size=cfg.training.batch_size)
 
 
 if __name__ == '__main__':

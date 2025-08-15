@@ -1,6 +1,6 @@
 #!/bin/bash
 ### NOTE
-### This script is meant to run GCG (Greedy Coordinate Gradient) Attack on the Cineca EuroHPC cluster.
+### This script is meant to run ILM Inversion evaluation on the Cineca EuroHPC cluster.
 ###
 
 #SBATCH --job-name=inverse_lm_inf             # Descriptive job name
