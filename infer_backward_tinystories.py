@@ -301,6 +301,7 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None, lightning_mod
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
                    cfg: CustomLLMPagConfig, k_samples: int | None, skip_prefix_tokens: int, beam_size: int):
     output_file = f'backward_inference-{cfg.training.method}-{use_init}.json'
+    output_file = f'{cfg.model.output_dir}/{output_file}'
 
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(cfg=cfg, device=device,
                                                                                       use_init=use_init,
