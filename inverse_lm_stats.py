@@ -177,7 +177,7 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
     all_ilm_generated_metrics: list[dict] = []
     all_bigram_generated_metrics: list[dict] = []
 
-    for sample in inference_result.samples:
+    for sample in tqdm(inference_result.samples, desc='Evaluating samples'):
         # Create tensors for the list[int] tokens
         original_prefix_tokens = torch.tensor(sample.original_prefix_tokens, dtype=torch.long, device=device)
         predicted_prefix_tokens = torch.tensor(sample.predicted_prefix_tokens, dtype=torch.long, device=device)

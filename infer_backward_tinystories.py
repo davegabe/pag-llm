@@ -332,7 +332,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     all_samples_processed: list[BackwardInferenceSampleResult] = []
 
     # Iterate over entire test dataset
-    for batch_idx, batch in enumerate(data_module.test_dataloader()):
+    for batch_idx, batch in tqdm(enumerate(data_module.test_dataloader()), desc='Processing inversion batches'):
         batch = batch.to(torch.device(device))
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
@@ -471,7 +471,7 @@ def main(cfg: CustomLLMPagConfig):
     baseline_ckpt_path = ckpt_path.parent / 'best-base.ckpt'
 
     run_evaluation(device='cuda:0',
-                   k_samples=20_000,  # How many samples to take from the dataset (set to None for all samples)
+                   k_samples=50,  # How many samples to take from the dataset (set to None for all samples)
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
                    beam_size=5,
                    prefix_len=20,  # How many tokens to predict
