@@ -50,3 +50,4 @@ export WANDB_MODE=offline
 export HF_EVALUATE_OFFLINE=1
 
 srun python infer_backward_tinystories.py "$@"
+srun python inverse_lm_stats.py "$@"
