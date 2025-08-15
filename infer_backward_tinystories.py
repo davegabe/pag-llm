@@ -1,10 +1,12 @@
 import json
+import os.path
 import sys
 from pathlib import Path
 
 import torch
 from evaluate.utils import logging
 from torch.nn import CrossEntropyLoss
+from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
 from config import CustomLLMPagConfig, apply_config
@@ -302,6 +304,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                    cfg: CustomLLMPagConfig, k_samples: int | None, skip_prefix_tokens: int, beam_size: int):
     output_file = f'backward_inference-{cfg.training.method}-{use_init}.json'
     output_file = f'{cfg.model.output_dir}/{output_file}'
+
+    if os.path.exists(output_file):
+        print(f'Output file {output_file} already exists. Skipping evaluation.')
+        return
 
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(cfg=cfg, device=device,
                                                                                       use_init=use_init,
