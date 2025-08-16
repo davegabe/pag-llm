@@ -174,11 +174,11 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
 
     lightning_module.eval()
 
-    # Initialize metrics tracking (new evaluation metrics)
-    all_ilm_generated_metrics: list[dict] = []
-    all_bigram_generated_metrics: list[dict] = []
+    for i, sample in enumerate(tqdm(inference_result.samples, desc='Evaluating samples')):
+        # Skip the sample if it is already evaluated
+        if sample.ilm_metrics is not None:
+            continue
 
-    for sample in tqdm(inference_result.samples, desc='Evaluating samples'):
         # Create tensors for the list[int] tokens
         original_prefix_tokens = torch.tensor(sample.original_prefix_tokens, dtype=torch.long, device=device)
         predicted_prefix_tokens = torch.tensor(sample.predicted_prefix_tokens, dtype=torch.long, device=device)
@@ -200,7 +200,7 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
                                                                         predicted_overall_text=predicted_prefix_text,
                                                                         original_overall_text=original_prefix_text,
                                                                         suffix_text=suffix_text, )
-        all_ilm_generated_metrics.append(ilm_generated_metrics)
+        sample.ilm_metrics = ilm_generated_metrics
 
         if sample.bigram_text:
             bigram_tokens = torch.tensor(sample.bigram_tokens, dtype=torch.long, device=device)
@@ -218,7 +218,26 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
                                                                                predicted_overall_text=bigram_text,
                                                                                original_overall_text=original_prefix_text,
                                                                                suffix_text=suffix_text, )
-            all_bigram_generated_metrics.append(bigram_generated_metrics)
+            sample.bigram_metrics = bigram_generated_metrics
+
+        # Every 100 samples, save the samples to disk
+        if i % 100 == 0 and i > 0:
+            print(f"Saving intermediate results after sample {i}...")
+            # It must be atomic, since the process may get killed at any time
+            # Save the current inference result to a temporary file
+            temp_file = precomputed_inference_json_path + '.tmp'
+            with open(temp_file, 'w', encoding='utf-8') as f:
+                json.dump(inference_result.to_dict(), f, ensure_ascii=False, indent=4)
+            # Rename the temporary file to the original file
+            Path(temp_file).rename(precomputed_inference_json_path)
+
+    # Initialize metrics tracking (new evaluation metrics)
+    all_ilm_generated_metrics: list[dict] = [
+        sample.ilm_metrics for sample in inference_result.samples
+    ]
+    all_bigram_generated_metrics: list[dict] = [
+        sample.bigram_metrics for sample in inference_result.samples if sample.bigram_metrics is not None
+    ]
 
     # Aggregate comprehensive metrics
     aggregated_comprehensive_metrics: dict[str, Any] = aggregate_metrics(all_ilm_generated_metrics)

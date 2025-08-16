@@ -26,6 +26,9 @@ class BackwardInferenceSampleResult:
     bigram_tokens: list[int] | None
     bigram_text: str | None
 
+    ilm_metrics: dict | None = None  # ILM metrics obtained later in the process (inverse_lm_stats)
+    bigram_metrics: dict | None = None  # Bigram metrics obtained later in the process, if we have a bigram text
+
     @staticmethod
     def from_dict(data: dict) -> 'BackwardInferenceSampleResult':
         """
@@ -45,7 +48,9 @@ class BackwardInferenceSampleResult:
             suffix_tokens=data['suffix_tokens'],
             suffix_text=data['suffix_text'],
             bigram_tokens=data.get('bigram_tokens'),
-            bigram_text=data.get('bigram_text')
+            bigram_text=data.get('bigram_text'),
+            ilm_metrics=data.get('ilm_metrics'),
+            bigram_metrics=data.get('bigram_metrics'),
         )
 
     def to_dict(self) -> dict:
@@ -63,7 +68,9 @@ class BackwardInferenceSampleResult:
             'suffix_tokens': self.suffix_tokens,
             'suffix_text': self.suffix_text,
             'bigram_tokens': self.bigram_tokens,
-            'bigram_text': self.bigram_text
+            'bigram_text': self.bigram_text,
+            'ilm_metrics': self.ilm_metrics,
+            'bigram_metrics': self.bigram_metrics,
         }
 
 
