@@ -1,4 +1,3 @@
-import json
 import os.path
 import sys
 from pathlib import Path
@@ -302,7 +301,7 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None, lightning_mod
 
 def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, baseline_ckpt_file: str | None,
                    cfg: CustomLLMPagConfig, k_samples: int | None, skip_prefix_tokens: int, beam_size: int):
-    output_file = f'backward_inference-{cfg.training.method}-{use_init}.json'
+    output_file = f'backward_inference-{cfg.training.method}-{use_init}.zip'
     output_file = f'{cfg.model.output_dir}/{output_file}'
 
     if os.path.exists(output_file):
@@ -415,12 +414,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     # At the end of the evaluation, save all samples to the output file
     print(f'Processed {total_samples_processed} samples in total.')
     print(f'Saving results to {output_file}...')
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json_result = BackwardInferenceResult(samples=all_samples_processed, ckpt_file=ckpt_file, prefix_len=prefix_len,
-                                              use_init=use_init, baseline_ckpt_file=baseline_ckpt_file,
-                                              k_samples=k_samples,
-                                              skip_prefix_tokens=skip_prefix_tokens, beam_size=beam_size, )
-        json.dump(json_result.to_dict(), f, ensure_ascii=False, indent=2)
+    json_result = BackwardInferenceResult(samples=all_samples_processed, ckpt_file=ckpt_file, prefix_len=prefix_len,
+                                          use_init=use_init, baseline_ckpt_file=baseline_ckpt_file,
+                                          k_samples=k_samples,
+                                          skip_prefix_tokens=skip_prefix_tokens, beam_size=beam_size, )
+    json_result.to_file(output_file)
 
 
 def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, attention_mask: torch.Tensor,

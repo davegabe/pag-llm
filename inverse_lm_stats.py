@@ -1,5 +1,4 @@
 import dataclasses
-import json
 import pathlib
 from pathlib import Path
 from typing import Any
@@ -120,12 +119,10 @@ def init_evaluation(cfg: CustomLLMPagConfig, device: str, use_init: str, ckpt_fi
     return lightning_module, model_class_name, data_module, reverse_bigram, bigram_counts
 
 
-def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: CustomLLMPagConfig, batch_size: int):
+def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: CustomLLMPagConfig):
     # Load the samples
-    inference_result: BackwardInferenceResult
     print('Loading precomputed inference results from:', precomputed_inference_json_path)
-    with open(precomputed_inference_json_path, 'r', encoding='utf-8') as f:
-        inference_result = BackwardInferenceResult.from_dict(json.load(f))
+    inference_result = BackwardInferenceResult.from_file(precomputed_inference_json_path)
 
     use_init = inference_result.use_init
     ckpt_file = inference_result.ckpt_file
@@ -223,13 +220,7 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
         # Every 100 samples, save the samples to disk
         if i % 100 == 0 and i > 0:
             print(f"Saving intermediate results after sample {i}...")
-            # It must be atomic, since the process may get killed at any time
-            # Save the current inference result to a temporary file
-            temp_file = precomputed_inference_json_path + '.tmp'
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                json.dump(inference_result.to_dict(), f, ensure_ascii=False, indent=4)
-            # Rename the temporary file to the original file
-            Path(temp_file).rename(precomputed_inference_json_path)
+            inference_result.to_file(precomputed_inference_json_path)
 
     # Initialize metrics tracking (new evaluation metrics)
     all_ilm_generated_metrics: list[dict] = [
@@ -272,12 +263,11 @@ def main(cfg: CustomLLMPagConfig):
     else:
         raise ValueError(f"Unsupported training method: {cfg.training.method}. ")
 
-    output_file = f'backward_inference-{cfg.training.method}-{use_init}.json'
+    output_file = f'backward_inference-{cfg.training.method}-{use_init}.zip'
 
     run_evaluation(device='cuda:0',
                    precomputed_inference_json_path=f'{cfg.model.output_dir}/{output_file}',
-                   cfg=cfg,
-                   batch_size=cfg.training.batch_size)
+                   cfg=cfg)
 
 
 if __name__ == '__main__':
