@@ -186,6 +186,13 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
         predicted_prefix_text = sample.predicted_prefix_text
         suffix_text = sample.suffix_text
 
+        if original_prefix_text.endswith(suffix_text):
+            original_prefix_text = original_prefix_text[: -len(suffix_text)].rstrip()
+            original_prefix_tokens = original_prefix_tokens[: -len(suffix_tokens)]
+        if predicted_prefix_text.endswith(suffix_text):
+            predicted_prefix_text = predicted_prefix_text[: -len(suffix_text)].rstrip()
+            predicted_prefix_tokens = predicted_prefix_tokens[: -len(suffix_tokens)]
+
         ilm_generated_metrics = evaluator.compute_comprehensive_metrics(reference_prefix=original_prefix_tokens,
                                                                         generated_prefix=predicted_prefix_tokens,
                                                                         true_suffix=suffix_tokens,
