@@ -58,6 +58,9 @@ class GCG:
         x_one_hot = self._generate_random_one_hot()
 
         previous_losses: list[torch.Tensor] = []
+        best_loss_so_far = float('inf')
+        best_x_one_hot = None
+        best_step = 0
 
         step: int = 0
         desc = f'Running GCG Attack on sample #{sample_idx}' if sample_idx else 'Running GCG Attack on a sample'
@@ -65,6 +68,12 @@ class GCG:
             x_one_hot.unsqueeze_(0)
             x_one_hot.requires_grad_(True)
             x_one_hot, loss = self._run_step(x_one_hot, y_ids, y_embeds)
+
+            # Track best loss and corresponding attack
+            if loss.item() < best_loss_so_far:
+                best_loss_so_far = loss.item()
+                best_x_one_hot = x_one_hot.detach().clone()
+                best_step = step
 
             if stop_after_same_loss_steps is not None:
                 previous_losses.append(loss)
@@ -77,15 +86,27 @@ class GCG:
                 previous_losses = previous_losses[-stop_after_same_loss_steps:]
 
             if evaluate_every_n_steps is not None and step % evaluate_every_n_steps == 0 and step > 0:
-                x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+                # Log the best attack so far, not the last
+                if best_x_one_hot is not None:
+                    x_attack_str, y_attack_response = self._evaluate_attack(best_x_one_hot, y_len)
+                    log_loss = best_loss_so_far
+                else:
+                    x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+                    log_loss = loss.item()
                 if intermediate_callback is not None:
                     intermediate_callback(step, x_attack_str, y_attack_response)
                 tqdm.write(f'Step: {step}')
-                tqdm.write(f'\tAttack: "{x_attack_str}"')
-                tqdm.write(f'\tLLM Response (loss: {loss.item():.3f}): "{y_attack_response}"\n')
+                tqdm.write(f'\tBest Attack So Far: "{x_attack_str}"')
+                tqdm.write(f'\tLLM Response (best loss: {log_loss:.3f}): "{y_attack_response}"\n')
 
-        x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
-        return x_attack_str, y_attack_response, step
+        # Return the best attack found during all steps
+        if best_x_one_hot is not None:
+            x_attack_str, y_attack_response = self._evaluate_attack(best_x_one_hot, y_len)
+            return x_attack_str, y_attack_response, best_step
+        else:
+            # Fallback: return last
+            x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
+            return x_attack_str, y_attack_response, step
 
     @torch.no_grad()
     def _evaluate_attack(self, x_one_hot: torch.Tensor, y_output_length: int) -> tuple[str, str]:
