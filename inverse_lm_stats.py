@@ -226,7 +226,7 @@ def run_evaluation(device: str, precomputed_inference_json_path: str, cfg: Custo
 
         # Every 100 samples, save the samples to disk
         if i % 100 == 0 and i > 0:
-            print(f"Saving intermediate results after sample {i}...")
+            print(f"\nSaving intermediate results after sample {i}...", flush=True)
             inference_result.to_file(precomputed_inference_json_path)
 
     # Initialize metrics tracking (new evaluation metrics)
