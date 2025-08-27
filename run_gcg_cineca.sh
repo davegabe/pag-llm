@@ -90,4 +90,4 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python run_gcg.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
+srun .venv/bin/python -u run_gcg_wrapper.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
