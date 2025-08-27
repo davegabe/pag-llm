@@ -21,8 +21,8 @@ class GCG:
         self.model = model.eval()
         self.device = self.model.device
         self.tokenizer = tokenizer
-        self.vocab_size = tokenizer.vocab_size
-        assert self.vocab_size > 0
+        assert isinstance(tokenizer.vocab_size, int) and tokenizer.vocab_size > 0
+        self.vocab_size: int = tokenizer.vocab_size
         self.num_prefix_tokens = num_prefix_tokens
         self.num_steps = num_steps
         self.search_width = search_width
@@ -30,7 +30,7 @@ class GCG:
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
             stop_after_same_loss_steps: int | None = 10, show_progress: bool = True,
-            intermediate_callback: callable = None, sample_idx: int | None = None) -> tuple[str, str, int]:
+            sample_idx: int | None = None) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.
 
@@ -41,8 +41,6 @@ class GCG:
             stop_after_same_loss_steps: Number of steps to run with the same GCG loss value before stopping the attack.
                                          If None, no early stopping is performed.
             show_progress: Whether to show a progress bar during the attack.
-            intermediate_callback: Optional callback function to call at intermediate steps.
-                                 Called with (step, x_attack_str, y_attack_response).
             sample_idx: Optional index of the sample being attacked, for logging purposes.
 
         Returns:
@@ -57,7 +55,7 @@ class GCG:
         # Our input X is a set of num_prefix_tokens random tokens, that will have to be optimized
         x_one_hot = self._generate_random_one_hot()
 
-        previous_losses: list[torch.Tensor] = []
+        previous_losses: list[float] = []
         best_loss_so_far = float('inf')
         best_x_one_hot = None
         best_step = 0
@@ -76,7 +74,7 @@ class GCG:
                 best_step = step
 
             if stop_after_same_loss_steps is not None:
-                previous_losses.append(loss)
+                previous_losses.append(loss.item())
 
                 if len(previous_losses) >= stop_after_same_loss_steps \
                         and max(previous_losses) - min(previous_losses) < 1e-9:
@@ -93,8 +91,6 @@ class GCG:
                 else:
                     x_attack_str, y_attack_response = self._evaluate_attack(x_one_hot, y_len)
                     log_loss = loss.item()
-                if intermediate_callback is not None:
-                    intermediate_callback(step, x_attack_str, y_attack_response)
                 tqdm.write(f'Step: {step}')
                 tqdm.write(f'\tBest Attack So Far: "{x_attack_str}"')
                 tqdm.write(f'\tLLM Response (best loss: {log_loss:.3f}): "{y_attack_response}"\n')
@@ -128,7 +124,7 @@ class GCG:
         y_attack_response_ids = self.model.generate(
             inputs=x_ids.unsqueeze(0),
             max_new_tokens=y_output_length,
-        ).squeeze(0)[x_len:]
+        ).squeeze(0)[x_len:] # type: ignore
         y_attack_response = self.tokenizer.decode(y_attack_response_ids)
 
         return x_attack_str, y_attack_response
@@ -301,7 +297,7 @@ class GCG:
         Returns:
             torch.Tensor: Embedded input IDs
         """
-        return one_hot @ self.model.get_input_embeddings().weight.data
+        return one_hot @ self.model.get_input_embeddings().weight.data # type: ignore
 
     @torch.no_grad()
     def _generate_random_one_hot(self) -> torch.Tensor:

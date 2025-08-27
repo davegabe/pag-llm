@@ -1,12 +1,13 @@
 from dataclasses import dataclass
 from typing import Any
-
-from models.base_model import BaseLMModel
 import torch
 from tqdm import tqdm
-import wandb
+from infer_backward_tinystories import compute_semantic_similarity, get_batch_perplexity
+from models.base_model import BaseLMModel
+from torch.nn.utils.rnn import pad_sequence
+from sentence_transformers import SentenceTransformer
 
-from data.data_processor import TextDataset
+from data.data_processor import PreTokenizedDataset, TextDataset
 from gcg import gcg_algorithm, gcg_utils
 
 
@@ -72,15 +73,15 @@ class GCGResult:
             for target_token, attack_response_token in zip(self.target_response_ids, self.y_attack_response_ids)
             if target_token == attack_response_token
         )
+    
 
-def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
-                           dataset: TextDataset,
-                           target_response_len: int,
-                           random_select_samples: bool = True,
-                           max_samples_to_attack: int | None = None,
-                           evaluate_every_n_steps: int = 500,
-                           lightning_model: BaseLMModel = None,
-                           semantic_model = None) -> list[GCGResult]:
+def evaluate_model_with_gcg(
+        gcg: gcg_algorithm.GCG,
+        dataset: TextDataset | PreTokenizedDataset,
+        target_response_len: int,
+        random_select_samples: bool = True,
+        max_samples_to_attack: int | None = None
+    ) -> list[GCGResult]:
     """
     Run GCG evaluation with intermediate convergence logging.
     This function runs GCG once per sample and logs metrics at specified intervals.
@@ -109,12 +110,9 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
     else:
         samples_to_attack = list(range(max_samples_to_attack))
 
-    # Determine interval checkpoints
-    intervals = list(range(evaluate_every_n_steps, gcg.num_steps + 1, evaluate_every_n_steps))
-    interval_results: dict[int, list[GCGResult]] = {step: [] for step in intervals}
     final_results: list[GCGResult] = []
 
-    # Iterate through the dataset and attack each example
+    # Iterate through the dataset and attack each example (only final results are stored)
     for sample_idx in tqdm(samples_to_attack, desc="Running GCG Attacks"):
         item = dataset[sample_idx]
         input_ids = item.input_ids[item.attention_mask == 1]
@@ -126,25 +124,10 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
         original_prefix_ids = input_ids[:prefix_len]
         target_response_ids = input_ids[prefix_len:prefix_len + target_response_len]
         target_response_str = gcg.tokenizer.decode(target_response_ids)
-
-        # Capture intermediate attacks at our evaluation intervals
-        def capture_intermediate(step: int, x_str: str, y_str: str):
-            if step in interval_results:
-                y_ids = gcg.tokenizer.encode(y_str, return_tensors="pt")[0]
-                interval_results[step].append(GCGResult(
-                    original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
-                    target_response_ids=target_response_ids.detach().cpu().tolist(),
-                    x_attack_str=x_str,
-                    y_attack_response_ids=y_ids.detach().cpu().tolist(),
-                    steps=step,
-                ))
-
-        # Run the attack with automatic intermediate calls
+        # Run the attack (no intermediate snapshot capture)
         x_attack_str, y_attack_str, total_steps = gcg.run(
             target_response_str,
             show_progress=False,
-            evaluate_every_n_steps=evaluate_every_n_steps,
-            intermediate_callback=capture_intermediate,
             sample_idx=sample_idx
         )
 
@@ -154,78 +137,133 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
             original_prefix_ids=original_prefix_ids.detach().cpu().tolist(),
             target_response_ids=target_response_ids.detach().cpu().tolist(),
             x_attack_str=x_attack_str,
-            y_attack_response_ids=y_final_ids.detach().cpu().tolist(),
+            y_attack_response_ids=y_final_ids.detach().cpu().tolist(), # type: ignore
             steps=total_steps,
         )
         final_results.append(result)
-
-    # Now log metrics for each interval
-    for step, results in interval_results.items():
-        # results: snapshots captured at exactly this step for currently-running samples
-        # finished_results: final results for samples that finished at or before this step
-        finished_results = [r for r in final_results if r.steps <= step]
-
-        # Combined view includes both currently-running snapshots and those that already finished
-        combined_results = results + finished_results
-
-        # Skip the interval if there are no entries at all
-        if not combined_results:
-            continue
-
-        # Compute basic success metrics
-        token_success_rate = _compute_token_success_rate(combined_results)
-        sample_success_rate = _compute_sample_success_rate(combined_results)
-
-        # Log basic metrics
-        metrics = {
-            f"convergence/{step}/token_success_rate": token_success_rate,
-            f"convergence/{step}/sample_success_rate": sample_success_rate,
-            f"convergence/{step}/num_samples": len(results),
-            f"convergence/{step}/steps": step
-        }
-
-        # Compute and add naturalness metrics if models are provided
-        if lightning_model is not None and semantic_model is not None:
-            naturalness_metrics = _compute_naturalness_metrics(
-                results, lightning_model, semantic_model, step
-            )
-            for key, value in naturalness_metrics.items():
-                metrics[f"convergence/{step}/{key}"] = value
-
-        wandb.log(metrics)
-        
-        print(f"Step {step}: Token success rate: {token_success_rate:.2%}, "
-              f"Sample success rate: {sample_success_rate:.2%}")
-
     return final_results
 
 
-def _compute_token_success_rate(gcg_results: list[GCGResult]) -> float:
-    """Compute token-level success rate."""
-    num_successful_tokens = sum(result.get_success_tokens() for result in gcg_results)
-    num_total_tokens = sum(
-        min(len(result.target_response_ids), len(result.y_attack_response_ids))
-        for result in gcg_results
-    )
-    return num_successful_tokens / num_total_tokens if num_total_tokens > 0 else 0.0
 
-
-def _compute_sample_success_rate(gcg_results: list[GCGResult], min_success_tokens: int = 2) -> float:
-    """Compute sample-level success rate (samples with at least min_success_tokens successful tokens)."""
-    successful_samples = [r for r in gcg_results if r.get_success_tokens() >= min_success_tokens]
-    return len(successful_samples) / len(gcg_results) if gcg_results else 0.0
-
-
-def _compute_naturalness_metrics(gcg_results: list[GCGResult], 
-                                lightning_model: BaseLMModel,
-                                semantic_model,
-                                step_interval: int,
-                                batch_size: int = 128) -> dict:
-    """Compute naturalness metrics for GCG-generated prefixes."""
-    # Import functions from run_gcg.py and infer_backward_tinystories.py
-    from infer_backward_tinystories import get_batch_perplexity, compute_semantic_similarity
-    from run_gcg import compute_non_alphanumeric_ratio, compute_max_consecutive_token_repetition
+@torch.no_grad()
+def count_repeated_tokens(x_input_ids: torch.Tensor, x_attention_mask: torch.Tensor | None = None) -> torch.Tensor:
+    """
+    Count the number of repeated tokens in the given input IDs, considering the attention mask for valid tokens.
+    Adapted from infer_backward_tinystories.py
     
+    Args:
+        x_input_ids: Input IDs of the sentences.
+        x_attention_mask: Attention mask of the sentences. If None, assumes all tokens are valid.
+
+    Returns:
+        torch.Tensor: The number of repeated tokens for each sentence.
+    """
+    if x_input_ids.ndim == 1:
+        x_input_ids = x_input_ids.unsqueeze(0)
+    
+    if x_attention_mask is None:
+        x_attention_mask = torch.ones_like(x_input_ids)
+    elif x_attention_mask.ndim == 1:
+        x_attention_mask = x_attention_mask.unsqueeze(0)
+    
+    assert x_input_ids.shape == x_attention_mask.shape, \
+        f'input_ids and attention_mask shape mismatch: {x_input_ids.shape} != {x_attention_mask.shape}'
+    assert x_input_ids.ndim == 2, \
+        f'input_ids shape mismatch: {x_input_ids.shape} != (batch_size, seq_len)'
+
+    num_classes = x_input_ids.max().item() + 1
+
+    # Set an invalid token ID where the attention_mask is zero
+    invalid_token_id = int(num_classes)
+    x_input_ids = x_input_ids.masked_fill(x_attention_mask == 0, invalid_token_id)
+
+    # Get the counts of each token in the batch, keeping the batch dimension
+    target = torch.zeros(x_input_ids.size(0), invalid_token_id + 1, dtype=x_input_ids.dtype, device=x_input_ids.device)
+    values = torch.ones_like(x_input_ids)
+    target.scatter_add_(dim=1, index=x_input_ids, src=values)
+
+    # Remove the invalid token id from the target
+    target = target[:, :invalid_token_id]
+
+    # Now, remove zeros (tokens not showing in the input_ids) and ones (tokens not repeating) from the target
+    target = target.masked_fill_(target < 2, 1)
+    total_repeated_tokens = (target - 1).sum(dim=1)
+    return total_repeated_tokens
+
+
+def compute_non_alphanumeric_ratio(text: str) -> float:
+    """
+    Compute the ratio of non-alphanumeric characters in the text.
+    
+    Args:
+        text: Input text string
+        
+    Returns:
+        float: Ratio of non-alphanumeric characters (0.0 to 1.0)
+    """
+    if not text:
+        return 0.0
+    
+    non_alphanumeric_count = sum(1 for char in text if not char.isalnum())
+    return non_alphanumeric_count / len(text)
+
+
+def compute_max_consecutive_token_repetition(input_ids: torch.Tensor, attention_mask: torch.Tensor | None = None) -> int:
+    """
+    Compute the maximum consecutive token repetition in the input sequence.
+    
+    Args:
+        input_ids: Input token IDs (1D tensor)
+        attention_mask: Attention mask (1D tensor). If None, assumes all tokens are valid.
+        
+    Returns:
+        int: Maximum consecutive token repetition length
+    """
+    if input_ids.ndim > 1:
+        input_ids = input_ids.squeeze()
+    
+    if attention_mask is None:
+        attention_mask = torch.ones_like(input_ids)
+    elif attention_mask.ndim > 1:
+        attention_mask = attention_mask.squeeze()
+    
+    # Get valid tokens only
+    valid_tokens = input_ids[attention_mask == 1]
+    
+    if len(valid_tokens) <= 1:
+        return 1
+    
+    max_consecutive = 1
+    current_consecutive = 1
+    
+    for i in range(1, len(valid_tokens)):
+        if valid_tokens[i] == valid_tokens[i-1]:
+            current_consecutive += 1
+            max_consecutive = max(max_consecutive, current_consecutive)
+        else:
+            current_consecutive = 1
+    
+    return max_consecutive
+
+
+def compute_naturalness_metrics(gcg_results: list[GCGResult], 
+                               lightning_model: BaseLMModel,
+                               semantic_model: SentenceTransformer,
+                               step_interval: int,
+                               batch_size: int = 128) -> dict:
+    """
+    Compute naturalness metrics for GCG-generated prefixes.
+    
+    Args:
+        gcg_results: List of GCG results
+        lightning_model: The language model for computing perplexity
+        semantic_model: SentenceTransformer model for semantic similarity
+        step_interval: The step interval for logging
+        batch_size: Batch size for processing
+        
+    Returns:
+        dict: Dictionary containing all computed metrics
+    """
     if not gcg_results:
         return {}
     
@@ -234,53 +272,84 @@ def _compute_naturalness_metrics(gcg_results: list[GCGResult],
     
     # Collect all metrics
     prefix_perplexities = []
+    total_token_repetitions = []
     semantic_similarities = []
     non_alphanumeric_ratios = []
     max_consecutive_repetitions = []
     
-    # Process in batches for efficiency
+    # Process in batches
     for start_i in range(0, len(gcg_results), batch_size):
         end_i = min(start_i + batch_size, len(gcg_results))
         batch = gcg_results[start_i:end_i]
         
-        # Prepare attack prefix texts for batch processing
-        attack_texts = [result.x_attack_str for result in batch]
-        original_texts = [tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True) 
-                         for result in batch]
+        # Handle tokenizers that might not have a pad token
+        pad_token_id: Any = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
         
-        # Tokenize attack prefixes for perplexity computation
-        attack_encodings = tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True)
-        attack_input_ids = attack_encodings['input_ids'].to(device)
-        attack_attention_mask = attack_encodings['attention_mask'].to(device)
+        # Prepare batch data
+        original_prefix_ids = pad_sequence([torch.tensor(result.original_prefix_ids) for result in batch], 
+                                         batch_first=True, padding_value=pad_token_id).to(device)
+        attack_prefix_ids = []
+        
+        # Extract attack prefixes from attack strings
+        for result in batch:
+            attack_tokens = tokenizer.encode(result.x_attack_str, return_tensors='pt').squeeze() # type: ignore
+            if attack_tokens.ndim == 0:
+                attack_tokens = attack_tokens.unsqueeze(0)
+            attack_prefix_ids.append(attack_tokens)
+        
+        attack_prefix_ids = pad_sequence(attack_prefix_ids, batch_first=True, padding_value=pad_token_id).to(device)
+        
+        # Create attention masks
+        original_attention_mask = (original_prefix_ids != pad_token_id).long()
+        attack_attention_mask = (attack_prefix_ids != pad_token_id).long()
         
         # Compute perplexity for attack prefixes
-        attack_perplexities = get_batch_perplexity(lightning_model, attack_input_ids, attack_attention_mask)
+        attack_perplexities = get_batch_perplexity(lightning_model, attack_prefix_ids, attack_attention_mask)
         prefix_perplexities.extend(attack_perplexities.cpu().tolist())
         
-        # Compute other metrics for each sample in batch
-        for i, (attack_text, original_text) in enumerate(zip(attack_texts, original_texts)):
+        # Compute token repetition for attack prefixes
+        attack_repetitions = count_repeated_tokens(attack_prefix_ids, attack_attention_mask)
+        total_token_repetitions.extend(attack_repetitions.cpu().tolist())
+        
+        # Compute semantic similarity and character-level metrics
+        for i, result in enumerate(batch):
+            # Get original and attack prefix texts
+            original_text = tokenizer.decode(result.original_prefix_ids, skip_special_tokens=True)
+            attack_text = result.x_attack_str
+            
             # Semantic similarity
-            if semantic_model is not None:
-                semantic_sim = compute_semantic_similarity(attack_text, original_text, semantic_model)
-                semantic_similarities.append(semantic_sim)
+            semantic_sim = compute_semantic_similarity(attack_text, original_text, semantic_model)
+            semantic_similarities.append(semantic_sim)
             
             # Non-alphanumeric ratio
             non_alpha_ratio = compute_non_alphanumeric_ratio(attack_text)
             non_alphanumeric_ratios.append(non_alpha_ratio)
             
             # Maximum consecutive token repetition
-            attack_tokens = tokenizer.encode(attack_text, return_tensors='pt')
-            max_consecutive = compute_max_consecutive_token_repetition(attack_tokens)
+            max_consecutive = compute_max_consecutive_token_repetition(
+                attack_prefix_ids[i], attack_attention_mask[i]
+            )
             max_consecutive_repetitions.append(max_consecutive)
     
-    # Aggregate metrics
+    # Compute aggregate metrics
     metrics = {
-        "mean_prefix_perplexity": sum(prefix_perplexities) / len(prefix_perplexities) if prefix_perplexities else 0.0,
-        "mean_non_alphanumeric_ratio": sum(non_alphanumeric_ratios) / len(non_alphanumeric_ratios) if non_alphanumeric_ratios else 0.0,
-        "mean_max_consecutive_repetition": sum(max_consecutive_repetitions) / len(max_consecutive_repetitions) if max_consecutive_repetitions else 0.0,
+        f"naturalness_{step_interval}steps/mean_prefix_perplexity": sum(prefix_perplexities) / len(prefix_perplexities),
+        f"naturalness_{step_interval}steps/std_prefix_perplexity": torch.tensor(prefix_perplexities, dtype=torch.float32).std().item(),
+
+        f"naturalness_{step_interval}steps/mean_total_token_repetition": sum(total_token_repetitions) / len(total_token_repetitions),
+        f"naturalness_{step_interval}steps/std_total_token_repetition": torch.tensor(total_token_repetitions, dtype=torch.float32).std().item(),
+
+        f"naturalness_{step_interval}steps/mean_semantic_similarity": sum(semantic_similarities) / len(semantic_similarities),
+        f"naturalness_{step_interval}steps/std_semantic_similarity": torch.tensor(semantic_similarities, dtype=torch.float32).std().item(),
+
+        f"naturalness_{step_interval}steps/mean_non_alphanumeric_ratio": sum(non_alphanumeric_ratios) / len(non_alphanumeric_ratios),
+        f"naturalness_{step_interval}steps/std_non_alphanumeric_ratio": torch.tensor(non_alphanumeric_ratios, dtype=torch.float32).std().item(),
+
+        f"naturalness_{step_interval}steps/mean_max_consecutive_repetition": sum(max_consecutive_repetitions) / len(max_consecutive_repetitions),
+        f"naturalness_{step_interval}steps/std_max_consecutive_repetition": torch.tensor(max_consecutive_repetitions, dtype=torch.float32).std().item(),
+
+        f"naturalness_{step_interval}steps/num_samples": len(gcg_results),
     }
     
-    if semantic_similarities:
-        metrics["mean_semantic_similarity"] = sum(semantic_similarities) / len(semantic_similarities)
-    
     return metrics
+
