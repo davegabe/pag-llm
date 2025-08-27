@@ -699,7 +699,7 @@ def main(cfg: CustomLLMPagConfig):
         tokenizer=lightning_model.tokenizer,
         num_prefix_tokens=20, # GCG original work uses 20
         num_steps=num_steps, # Extended to num_steps for convergence analysis
-        search_width=16384, # GCG original work uses 512 as "batch size"
+        search_width=4096, # GCG original work uses 512 as "batch size"
         top_k=256, # GCG original work uses 256
     )
     # run_gcg_single_attack(gcg, target_response=' and it was a sunny day.')
