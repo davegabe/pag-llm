@@ -185,7 +185,7 @@ def get_config(config_name: str = 'base'):
     return config
 
 
-def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None]], None]:
+def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig], None] | Callable[[CustomLLMPagConfig], None]], None]:
     """
     Decorator FACTORY for main() to apply the Hydra configuration automatically.
 
@@ -196,7 +196,7 @@ def apply_config(config_name: str = 'base') -> Callable[[Callable[[LLMPagConfig]
         The actual decorator.
     """
 
-    def decorator(main_func: Callable[[LLMPagConfig], None]) -> None:
+    def decorator(main_func: Callable[[LLMPagConfig], None] | Callable[[CustomLLMPagConfig], None]) -> None:
         """
         Actual decorator function to apply the Hydra configuration.
 
