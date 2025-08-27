@@ -80,7 +80,9 @@ def evaluate_model_with_gcg(
         dataset: TextDataset | PreTokenizedDataset,
         target_response_len: int,
         random_select_samples: bool = True,
-        max_samples_to_attack: int | None = None
+        max_samples_to_attack: int | None = None,
+        samples_to_attack: list[int] | None = None,
+        process_rank: int = 0
     ) -> list[GCGResult]:
     """
     Run GCG evaluation with intermediate convergence logging.
@@ -92,9 +94,8 @@ def evaluate_model_with_gcg(
         target_response_len: Length of the target attack response we want to generate
         random_select_samples: Whether to randomly select samples from the dataset or not
         max_samples_to_attack: Maximum number of samples to attack. If None, all samples will be attacked.
-        evaluate_every_n_steps: Number of steps between metric evaluations and logging
-        lightning_model: Language model for computing naturalness metrics
-        semantic_model: SentenceTransformer model for semantic similarity
+        samples_to_attack: A specific list of sample indices to attack. If provided, `max_samples_to_attack` and `random_select_samples` are ignored.
+        process_rank: The rank of the current process, for positioning the progress bar.
         
     Returns:
         List of GCGResult objects from the final evaluation
@@ -102,18 +103,19 @@ def evaluate_model_with_gcg(
     gcg_utils.set_seeds()
     prefix_len = gcg.num_prefix_tokens
 
-    max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
-    max_samples_to_attack = min(max_samples_to_attack, len(dataset))
+    if samples_to_attack is None:
+        max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
+        max_samples_to_attack = min(max_samples_to_attack, len(dataset))
 
-    if max_samples_to_attack < len(dataset) and random_select_samples:
-        samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
-    else:
-        samples_to_attack = list(range(max_samples_to_attack))
+        if max_samples_to_attack < len(dataset) and random_select_samples:
+            samples_to_attack = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
+        else:
+            samples_to_attack = list(range(max_samples_to_attack))
 
     final_results: list[GCGResult] = []
 
     # Iterate through the dataset and attack each example (only final results are stored)
-    for sample_idx in tqdm(samples_to_attack, desc="Running GCG Attacks"):
+    for sample_idx in tqdm(samples_to_attack, desc=f"Running GCG Attacks (GPU {process_rank})", position=process_rank):
         item = dataset[sample_idx]
         input_ids = item.input_ids[item.attention_mask == 1]
         if input_ids.size(-1) <= prefix_len + target_response_len:
@@ -352,4 +354,3 @@ def compute_naturalness_metrics(gcg_results: list[GCGResult],
     }
     
     return metrics
-

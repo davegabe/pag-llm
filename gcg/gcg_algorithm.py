@@ -33,7 +33,7 @@ class GCG:
         self.model = torch.compile(self.model)
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
-            stop_after_same_loss_steps: int | None = 10, show_progress: bool = True,
+            stop_after_same_loss_steps: int | None = None, show_progress: bool = True,
             sample_idx: int | None = None) -> tuple[str, str, int]:
         """
         Run the GCG algorithm on the given model and tokenizer, to generate the y_message text as the suffix.

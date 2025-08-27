@@ -1,8 +1,9 @@
 import os
-
 import numpy as np
 import torch
 import transformers
+
+from config import CustomLLMPagConfig, LLMPagConfig
 
 
 def set_seeds(seed=444):
@@ -22,3 +23,18 @@ def set_seeds(seed=444):
     torch.cuda.manual_seed_all(seed)
     # Set the hf transformer seed
     transformers.set_seed(seed)
+
+def get_gpu_count(cfg: CustomLLMPagConfig | LLMPagConfig) -> int:
+    # Determine number of GPUs
+    world_size = 0
+    if torch.cuda.is_available():
+        if cfg.training.device:
+            # Use devices specified in config
+            visible_devices = [str(d) for d in cfg.training.device]
+            os.environ['CUDA_VISIBLE_DEVICES'] = ",".join(visible_devices)
+            world_size = len(visible_devices)
+        else:
+            # Use all available devices
+            world_size = torch.cuda.device_count()
+            os.environ['CUDA_VISIBLE_DEVICES'] = ",".join([str(i) for i in range(world_size)])
+    return world_size
