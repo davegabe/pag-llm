@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 from tqdm import tqdm
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
+from torch.amp.autocast_mode import autocast
 
 
 class GCG:
@@ -27,6 +28,9 @@ class GCG:
         self.num_steps = num_steps
         self.search_width = search_width
         self.top_k = top_k
+
+        # Compile the model for faster repeated forward passes
+        self.model = torch.compile(self.model)
 
     def run(self, y_message: str, evaluate_every_n_steps: int | None = None,
             stop_after_same_loss_steps: int | None = 10, show_progress: bool = True,
@@ -251,15 +255,17 @@ class GCG:
         assert attack_one_hot.ndim == 3 and attack_one_hot.size(0) == 1, \
             f'Expected attack_one_hot to be of shape (1, {self.num_prefix_tokens}, {self.vocab_size}), but got {attack_one_hot.shape}'
 
-        top_k_substitutions = self._compute_top_k_substitutions(attack_one_hot, target_ids, target_embeds)
-        assert top_k_substitutions.shape == (self.num_prefix_tokens, self.top_k), \
-            f'Expected top_k_substitutions to be of shape ({self.num_prefix_tokens}, {self.top_k}), but got {top_k_substitutions.shape}'
+        # Use autocast to speed up
+        with autocast("cuda", dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16):
+            top_k_substitutions = self._compute_top_k_substitutions(attack_one_hot, target_ids, target_embeds)
+            assert top_k_substitutions.shape == (self.num_prefix_tokens, self.top_k), \
+                f'Expected top_k_substitutions to be of shape ({self.num_prefix_tokens}, {self.top_k}), but got {top_k_substitutions.shape}'
 
-        proposed_prefixes = self._compute_random_replacements(attack_one_hot, top_k_substitutions)
+            proposed_prefixes = self._compute_random_replacements(attack_one_hot, top_k_substitutions)
 
-        with torch.no_grad():
-            prefixes_loss = self._compute_gcg_loss(proposed_prefixes, target_ids, target_embeds)
-            best_prefix_index = torch.argmin(prefixes_loss)
+            with torch.no_grad():
+                prefixes_loss = self._compute_gcg_loss(proposed_prefixes, target_ids, target_embeds)
+                best_prefix_index = torch.argmin(prefixes_loss)
 
         best_prefix_loss = prefixes_loss[best_prefix_index]
         best_prefix = proposed_prefixes[best_prefix_index]
@@ -280,10 +286,10 @@ class GCG:
         """
         # Tokenize the input message
         target_ids = self.tokenizer(target_message, return_tensors="pt").input_ids.to(self.device)
-        batch_target_ids = target_ids.repeat(self.search_width, 1)
+        target_embeds = self.model.get_input_embeddings()(target_ids) # Embed once
 
-        target_embeds = self.model.get_input_embeddings()(target_ids)
-        batch_target_embeds = target_embeds.repeat(self.search_width, 1, 1)
+        batch_target_ids = target_ids.repeat(self.search_width, 1)
+        batch_target_embeds = target_embeds.repeat(self.search_width, 1, 1) # Repeat the embeds
 
         return batch_target_ids, batch_target_embeds
 
