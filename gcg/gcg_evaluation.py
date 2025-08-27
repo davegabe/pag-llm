@@ -161,12 +161,20 @@ def evaluate_model_with_gcg(gcg: gcg_algorithm.GCG,
 
     # Now log metrics for each interval
     for step, results in interval_results.items():
-        if not results:
+        # results: snapshots captured at exactly this step for currently-running samples
+        # finished_results: final results for samples that finished at or before this step
+        finished_results = [r for r in final_results if r.steps <= step]
+
+        # Combined view includes both currently-running snapshots and those that already finished
+        combined_results = results + finished_results
+
+        # Skip the interval if there are no entries at all
+        if not combined_results:
             continue
 
         # Compute basic success metrics
-        token_success_rate = _compute_token_success_rate(results)
-        sample_success_rate = _compute_sample_success_rate(results)
+        token_success_rate = _compute_token_success_rate(combined_results)
+        sample_success_rate = _compute_sample_success_rate(combined_results)
 
         # Log basic metrics
         metrics = {
