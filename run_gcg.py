@@ -1,6 +1,7 @@
 import dataclasses
 import json
 import pathlib
+import os
 from datetime import datetime
 import torch.multiprocessing as mp
 
@@ -27,19 +28,39 @@ def run_gcg_worker(
     Worker process for running GCG on a subset of samples.
     """
     # Set up device
-    device = f'cuda:{rank}'
-    torch.cuda.set_device(device)
+    # Map rank to GPU index. Ensure we pass an integer to set_device to avoid
+    # ambiguous behavior across torch versions and with spawn method.
+    gpu_index = int(rank)
+    device = f'cuda:{gpu_index}'
+    try:
+        torch.cuda.set_device(gpu_index)
+    except Exception as e:
+        # Print and re-raise so the parent sees the traceback in logs
+        print(f"Worker {rank}: failed to set CUDA device {gpu_index}: {e}", flush=True)
+        raise
     torch.set_float32_matmul_precision('medium')
+
+    # Print some diagnostic info so logs show why a worker might hang.
+    try:
+        cuda_count = torch.cuda.device_count()
+    except Exception:
+        cuda_count = 'unknown'
+    cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '<not set>')
+    print(f"Worker {rank}: starting on device {device}. PID={os.getpid()}; torch.cuda.device_count()={cuda_count}; CUDA_VISIBLE_DEVICES={cuda_visible}", flush=True)
 
     # Load model and data
     path_str = None if model_checkpoint_path is None else str(model_checkpoint_path)
     if not path_str or path_str == 'None':
         raise ValueError(f"Worker {rank}: model_checkpoint_path is not set or is invalid: {model_checkpoint_path!r}")
     ckpt_path = pathlib.Path(path_str)
-    lightning_model, data_module, _, _ = load_model_from_checkpoint(
-        ckpt_path,
-        cfg,
-    )
+    try:
+        lightning_model, data_module, _, _ = load_model_from_checkpoint(
+            ckpt_path,
+            cfg,
+        )
+    except Exception as e:
+        print(f"Worker {rank}: error loading checkpoint {ckpt_path}: {e}", flush=True)
+        raise
     if data_module.test_dataset is None:
         raise ValueError("Test dataset is not available in the data module.")
     lightning_model.to(device).eval()
@@ -56,18 +77,25 @@ def run_gcg_worker(
 
     # Get subset of samples for this worker
     samples_for_worker = all_sample_indices[rank::world_size]
+    print(f"Worker {rank}: attacking {len(samples_for_worker)} samples (indices sample).", flush=True)
+    try:
+        # Run evaluation
+        worker_results = gcg_evaluation.evaluate_model_with_gcg(
+            gcg,
+            data_module.test_dataset,
+            target_response_len=10,
+            samples_to_attack=samples_for_worker,
+            process_rank=rank
+        )
 
-    # Run evaluation
-    worker_results = gcg_evaluation.evaluate_model_with_gcg(
-        gcg,
-        data_module.test_dataset,
-        target_response_len=10,
-        samples_to_attack=samples_for_worker,
-        process_rank=rank
-    )
-
-    # Put results in the queue
-    results_queue.put([r.to_dict() for r in worker_results])
+        # Put results in the queue
+        results_queue.put([r.to_dict() for r in worker_results])
+    except Exception as e:
+        # Catch exceptions so worker prints an error and doesn't silently hang
+        print(f"Worker {rank}: exception during evaluation: {e}", flush=True)
+        # Put an error marker in the queue so the parent knows this worker failed
+        results_queue.put({"worker": rank, "error": str(e)})
+        raise
 
 
 @apply_config('inv-first-tiny-train-small')

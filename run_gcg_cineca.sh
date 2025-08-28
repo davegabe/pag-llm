@@ -10,8 +10,8 @@
 
 #SBATCH --nodes=1                             # Number of nodes to use
 #SBATCH --gres=gpu:4                          # Number of GPUs per node
-#SBATCH --ntasks-per-node=4                   # Number of MPI tasks per node (Same number as the GPUs)
-#SBATCH --cpus-per-task=2                     # Number of CPU cores per task (adjust as needed)
+#SBATCH --ntasks-per-node=1                   # Single task per node; script will spawn per-GPU workers
+#SBATCH --cpus-per-task=8                     # Number of CPU cores per task (adjust as needed)
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
 #SBATCH --error=%x-%j.SLURMerr                # File for standard error (%x: job name, %j: job ID)

@@ -1,8 +1,13 @@
+import os
+import sys
 import signal
-import runpy
 
 # restore default SIGPIPE so Python does not raise/print BrokenPipeError on stdout close
 signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 
-# run the script as __main__
-runpy.run_path("run_gcg.py", run_name="__main__")
+# exec the target script so it becomes the main program image.
+# This avoids problems when using the 'spawn' start method, which imports
+# the main module by filename. Replacing the process with exec ensures
+# child processes can import the module normally and avoids deadlocks
+# caused by running the target as an ephemeral '__main__' via runpy.
+os.execv(sys.executable, [sys.executable, "run_gcg.py"] + sys.argv[1:])
