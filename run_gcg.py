@@ -22,7 +22,7 @@ def run_gcg_worker(
         num_steps: int,
         search_width: int,
         top_k: int,
-        results_queue: mp.Queue
+        output_dir: str | pathlib.Path,
     ):
     """
     Worker process for running GCG on a subset of samples.
@@ -88,13 +88,23 @@ def run_gcg_worker(
             process_rank=rank
         )
 
-        # Put results in the queue
-        results_queue.put([r.to_dict() for r in worker_results])
+        # Write per-worker results to a file to avoid Queue pipe deadlocks
+        out_dir = pathlib.Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / f'worker_{rank}.json'
+        with out_file.open('w') as f:
+            json.dump([r.to_dict() for r in worker_results], f)
+        print(f"Worker {rank}: wrote results to {out_file}", flush=True)
     except Exception as e:
         # Catch exceptions so worker prints an error and doesn't silently hang
         print(f"Worker {rank}: exception during evaluation: {e}", flush=True)
-        # Put an error marker in the queue so the parent knows this worker failed
-        results_queue.put({"worker": rank, "error": str(e)})
+        # Write a single unified worker file containing the error message
+        out_dir = pathlib.Path(output_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / f'worker_{rank}.json'
+        with out_file.open('w') as f:
+            json.dump({"error": str(e)}, f)
+        # Re-raise so logs show the traceback if spawn prints it
         raise
 
 
@@ -167,7 +177,11 @@ def main(cfg: CustomLLMPagConfig):
 
     # Use 'spawn' start method for CUDA compatibility in multiprocessing
     mp.set_start_method('spawn', force=True)
-    results_queue = mp.Queue()
+
+    # Prepare temporary per-worker output directory
+    tmp_out_dir = cfg.model.output_dir / f'gcg_{model_name}_tmp'
+    if not tmp_out_dir.exists():
+        tmp_out_dir.mkdir(parents=True, exist_ok=True)
 
     # Spawn worker processes
     print(f"Spawning workers with checkpoint: {ckpt_path}")
@@ -177,7 +191,7 @@ def main(cfg: CustomLLMPagConfig):
             target=run_gcg_worker,
             # Pass checkpoint path as string to avoid pickling/pathlib issues in spawned processes
             args=(rank, world_size, cfg, str(ckpt_path), all_sample_indices,
-                    num_prefix_tokens, num_steps, search_width, top_k, results_queue),
+                    num_prefix_tokens, num_steps, search_width, top_k, str(tmp_out_dir)),
         )
         p.start()
         processes.append(p)
@@ -186,13 +200,26 @@ def main(cfg: CustomLLMPagConfig):
     for p in processes:
         p.join()
 
-    # Collect results
+    # Collect results from per-worker files (each worker writes worker_<rank>.json)
     gcg_results_dicts = []
-    while not results_queue.empty():
-        gcg_results_dicts.extend(results_queue.get())
-    if not gcg_results_dicts:
-        print("No GCG results found.")
+    files = sorted(pathlib.Path(tmp_out_dir).glob('worker_*.json'))
+    if not files:
+        print("No GCG result files found.")
         return
+    for fpath in files:
+        with fpath.open() as f:
+            try:
+                data = json.load(f)
+            except Exception as e:
+                print(f"Failed to read {fpath}: {e}")
+                continue
+            # Unified format: either a list of result dicts or a dict with an 'error' key
+            if isinstance(data, list):
+                gcg_results_dicts.extend(data)
+            elif isinstance(data, dict) and data.get('error') is not None:
+                print(f"Worker file {fpath} contains error: {data['error']}")
+            else:
+                gcg_results_dicts.append(data)
 
     # Save final results
     if not gcg_output_file.parent.exists():
