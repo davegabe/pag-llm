@@ -12,5 +12,5 @@ signal.signal(signal.SIGPIPE, signal.SIG_DFL)
 # caused by running the target as an ephemeral '__main__' via runpy.
 # If user or environment hasn't set TQDM_MININTERVAL, set a conservative default
 # to reduce the amount of progress-bar output written to SLURM logs.
-os.environ.setdefault('TQDM_MININTERVAL', '10')
+os.environ.setdefault('TQDM_MININTERVAL', '300')
 os.execv(sys.executable, [sys.executable, "run_gcg.py"] + sys.argv[1:])

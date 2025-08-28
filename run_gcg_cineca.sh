@@ -90,6 +90,6 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-# Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 10s
-export TQDM_MININTERVAL=10
+# Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 300s (5 minutes)
+export TQDM_MININTERVAL=300
 srun .venv/bin/python -u run_gcg_wrapper.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
