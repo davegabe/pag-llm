@@ -94,7 +94,6 @@ export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
 # Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 10s
 export TQDM_MININTERVAL=30
-srun .venv/bin/python -u run_gcg_wrapper.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
 
 for i in {0..3}; do
     srun \
