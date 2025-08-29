@@ -12,6 +12,7 @@
 #SBATCH --gres=gpu:4                          # Number of GPUs per node
 #SBATCH --ntasks-per-node=1                   # Single task per node; script will spawn per-GPU workers
 #SBATCH --cpus-per-task=2                     # Number of CPU cores per task (adjust as needed)
+#SBATCH --gpus-per-task=1                     # Number of GPUs per task
 #SBATCH --ntasks=4                            # Total number of tasks
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
