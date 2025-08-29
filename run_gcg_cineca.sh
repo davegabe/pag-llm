@@ -9,7 +9,7 @@
 #SBATCH --time=1-00:00:00                     # Maximum wall time for "normal" QOS
 
 #SBATCH --nodes=1                             # Number of nodes to use
-#SBATCH --gres=gpu:1                          # Number of GPUs per node
+#SBATCH --gres=gpu:4                          # Number of GPUs per node
 #SBATCH --ntasks-per-node=1                   # Single task per node; script will spawn per-GPU workers
 #SBATCH --cpus-per-task=2                     # Number of CPU cores per task (adjust as needed)
 #SBATCH --ntasks=4                            # Total number of tasks
