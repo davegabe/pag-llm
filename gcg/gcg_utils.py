@@ -1,4 +1,5 @@
 import os
+
 import numpy as np
 import torch
 import transformers
@@ -25,6 +26,11 @@ def set_seeds(seed=444):
     transformers.set_seed(seed)
 
 def get_gpu_count(cfg: CustomLLMPagConfig | LLMPagConfig) -> int:
+    if cfg.training.gpu_rank is not None:
+        # This means that we are running in Cineca
+        print('Running with gpu_rank set, using 4 GPUs, as we assume to be in Cineca')
+        return 4
+
     # Determine number of GPUs
     world_size = 0
     if torch.cuda.is_available():

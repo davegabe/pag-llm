@@ -1,12 +1,8 @@
-import dataclasses
 import json
-import pathlib
 import os
-from datetime import datetime
-import torch.multiprocessing as mp
+import pathlib
 
 import torch
-import wandb
 
 from config import CustomLLMPagConfig, apply_config
 from gcg import gcg_algorithm, gcg_evaluation
@@ -21,9 +17,8 @@ def run_gcg_worker(
         num_prefix_tokens: int,
         num_steps: int,
         search_width: int,
-        top_k: int,
-        output_dir: str | pathlib.Path,
-    ):
+        top_k: int
+) -> list[dict]:
     """
     Worker process for running GCG on a subset of samples.
     """
@@ -41,9 +36,10 @@ def run_gcg_worker(
     torch.set_float32_matmul_precision('medium')
 
     # Print some diagnostic info so logs show why a worker might hang.
+    # noinspection PyBroadException
     try:
         cuda_count = torch.cuda.device_count()
-    except Exception:
+    except:
         cuda_count = 'unknown'
     cuda_visible = os.environ.get('CUDA_VISIBLE_DEVICES', '<not set>')
     print(f"Worker {rank}: starting on device {device}. PID={os.getpid()}; torch.cuda.device_count()={cuda_count}; CUDA_VISIBLE_DEVICES={cuda_visible}", flush=True)
@@ -88,23 +84,11 @@ def run_gcg_worker(
             process_rank=rank
         )
 
-        # Write per-worker results to a file to avoid Queue pipe deadlocks
-        out_dir = pathlib.Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / f'worker_{rank}.json'
-        with out_file.open('w') as f:
-            json.dump([r.to_dict() for r in worker_results], f)
-        print(f"Worker {rank}: wrote results to {out_file}", flush=True)
+        # Put results in the queue
+        return [r.to_dict() for r in worker_results]
     except Exception as e:
         # Catch exceptions so worker prints an error and doesn't silently hang
         print(f"Worker {rank}: exception during evaluation: {e}", flush=True)
-        # Write a single unified worker file containing the error message
-        out_dir = pathlib.Path(output_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-        out_file = out_dir / f'worker_{rank}.json'
-        with out_file.open('w') as f:
-            json.dump({"error": str(e)}, f)
-        # Re-raise so logs show the traceback if spawn prints it
         raise
 
 
@@ -139,87 +123,34 @@ def main(cfg: CustomLLMPagConfig):
     top_k=256 # GCG original work uses 256
 
     # Check if output file already exists
-    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}.json'
+    multi_gpu_suffix = '' if cfg.training.gpu_rank is None else f'_{cfg.training.gpu_rank}'
+    gcg_output_file = cfg.model.output_dir / f'gcg_{model_name}{multi_gpu_suffix}.json'
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
         return
 
-    # Initialize wandb
-    run_name = f"gcg_attack_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    wandb.init(
-        entity="pag-llm-team",
-        project="pag-llm-gcg-attacks",
-        name=run_name,
-        config={
-            **dataclasses.asdict(cfg),
-        },
-        tags=["gcg", "adversarial_attack", "language_model", "security"]
-    )
-    
-    # Log model information
-    total_params = sum(p.numel() for p in lightning_model.parameters())
-    trainable_params = sum(p.numel() for p in lightning_model.parameters() if p.requires_grad)
-    wandb.log({
-        "model_info/total_parameters": total_params,
-        "model_info/trainable_parameters": trainable_params,
-        "model_info/model_name": model_name,
-    })
-
     # Determine number of GPUs and set up multiprocessing
     world_size = get_gpu_count(cfg)
     print(f"Found {world_size} GPUs. Starting parallel GCG evaluation.")
-    wandb.log({"model_info/device": f"{world_size} GPUs"})
 
     # Determine samples to attack
     dataset = data_module.test_dataset
     max_samples_to_attack = int(len(dataset) * 0.1)
     all_sample_indices = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
 
-    # Use 'spawn' start method for CUDA compatibility in multiprocessing
-    mp.set_start_method('spawn', force=True)
-
-    # Prepare temporary per-worker output directory
-    tmp_out_dir = cfg.model.output_dir / f'gcg_{model_name}_tmp'
-    if not tmp_out_dir.exists():
-        tmp_out_dir.mkdir(parents=True, exist_ok=True)
-
     # Spawn worker processes
-    print(f"Spawning workers with checkpoint: {ckpt_path}")
-    processes = []
-    for rank in range(world_size):
-        p = mp.Process(
-            target=run_gcg_worker,
-            # Pass checkpoint path as string to avoid pickling/pathlib issues in spawned processes
-            args=(rank, world_size, cfg, str(ckpt_path), all_sample_indices,
-                    num_prefix_tokens, num_steps, search_width, top_k, str(tmp_out_dir)),
-        )
-        p.start()
-        processes.append(p)
-
-    # Wait for all workers to finish
-    for p in processes:
-        p.join()
-
-    # Collect results from per-worker files (each worker writes worker_<rank>.json)
-    gcg_results_dicts = []
-    files = sorted(pathlib.Path(tmp_out_dir).glob('worker_*.json'))
-    if not files:
-        print("No GCG result files found.")
-        return
-    for fpath in files:
-        with fpath.open() as f:
-            try:
-                data = json.load(f)
-            except Exception as e:
-                print(f"Failed to read {fpath}: {e}")
-                continue
-            # Unified format: either a list of result dicts or a dict with an 'error' key
-            if isinstance(data, list):
-                gcg_results_dicts.extend(data)
-            elif isinstance(data, dict) and data.get('error') is not None:
-                print(f"Worker file {fpath} contains error: {data['error']}")
-            else:
-                gcg_results_dicts.append(data)
+    print(f"Running worker {cfg.training.gpu_rank} with checkpoint: {ckpt_path}")
+    gcg_results_dicts = run_gcg_worker(
+        rank=cfg.training.gpu_rank if cfg.training.gpu_rank is not None else 0,
+        world_size=world_size,
+        cfg=cfg,
+        model_checkpoint_path=ckpt_path,
+        all_sample_indices=all_sample_indices,
+        num_prefix_tokens=num_prefix_tokens,
+        num_steps=num_steps,
+        search_width=search_width,
+        top_k=top_k,
+    )
 
     # Save final results
     if not gcg_output_file.parent.exists():
@@ -228,19 +159,6 @@ def main(cfg: CustomLLMPagConfig):
     with gcg_output_file.open('w') as f:
         json.dump(gcg_results_dicts, f, indent=4)
     print(f"Saved GCG results to {gcg_output_file}")
-
-    # Log the output file as an artifact
-    artifact = wandb.Artifact(
-        name=f"gcg_results_{model_name}",
-        type="results",
-        description=f"GCG attack results for model {model_name} with convergence analysis"
-    )
-    artifact.add_file(str(gcg_output_file))
-    wandb.log_artifact(artifact)
-
-    if wandb.run is not None:
-        print(f"Experiment logged to wandb: {wandb.run.url}")
-    wandb.finish()
 
 
 if __name__ == '__main__':

@@ -38,7 +38,7 @@ class TrainingConfig:
 
     run_evaluation_before_training: bool = True
     device: str | None = None
-
+    gpu_rank: int | None = None
 
 @dataclass
 class ModelConfig:

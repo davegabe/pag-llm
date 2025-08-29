@@ -9,9 +9,10 @@
 #SBATCH --time=1-00:00:00                     # Maximum wall time for "normal" QOS
 
 #SBATCH --nodes=1                             # Number of nodes to use
-#SBATCH --gres=gpu:4                          # Number of GPUs per node
+#SBATCH --gres=gpu:1                          # Number of GPUs per node
 #SBATCH --ntasks-per-node=1                   # Single task per node; script will spawn per-GPU workers
-#SBATCH --cpus-per-task=32                    # Number of CPU cores per task (adjust as needed)
+#SBATCH --cpus-per-task=2                     # Number of CPU cores per task (adjust as needed)
+#SBATCH --ntasks=4                            # Total number of tasks
 #SBATCH --partition=boost_usr_prod            # GPU-enabled partition
 #SBATCH --output=%x-%j.SLURMout               # File for standard output (%x: job name, %j: job ID)
 #SBATCH --error=%x-%j.SLURMerr                # File for standard error (%x: job name, %j: job ID)
@@ -90,6 +91,26 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-# Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 300s (5 minutes)
-export TQDM_MININTERVAL=300
+# Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 10s
+export TQDM_MININTERVAL=30
 srun .venv/bin/python -u run_gcg_wrapper.py --config-name "$CONFIG" training.method="$METHOD" +model.checkpoint_path="$CHECKPOINT" "${ADDITIONAL_ARGS[@]}"
+
+for i in {0..3}; do
+    srun \
+      --exclusive \
+      -n 1 \
+      --gpus=1 \
+      --gpu-bind=single:0 \
+      --job-name="gpu_task_$i" \
+      .venv/bin/python \
+      run_gcg.py \
+      -u \
+      --config-name "$CONFIG" \
+      training.method="$METHOD" \
+      +training.gpu_rank="$i" \
+      +model.checkpoint_path="$CHECKPOINT" \
+      "${ADDITIONAL_ARGS[@]}" \
+      &
+done
+
+wait
