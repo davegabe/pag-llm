@@ -94,7 +94,7 @@ def run_gcg_worker(
 
 @apply_config('inv-first-tiny-train-small')
 def main(cfg: CustomLLMPagConfig):
-    print(cfg)
+    print(cfg, cfg.training, cfg.training.gpu_rank, sep='\n', end='\n\n')
     """
     Main function to train the model with the Inverse First Token task.
 
