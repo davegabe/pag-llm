@@ -128,6 +128,7 @@ def main(cfg: CustomLLMPagConfig):
     if gcg_output_file.exists():
         print(f"File {gcg_output_file} already exists. Skipping GCG evaluation.")
         return
+    print(f"GCG results will be saved to {gcg_output_file}")
 
     # Determine number of GPUs and set up multiprocessing
     world_size = get_gpu_count(cfg)
@@ -137,6 +138,7 @@ def main(cfg: CustomLLMPagConfig):
     dataset = data_module.test_dataset
     max_samples_to_attack = int(len(dataset) * 0.1)
     all_sample_indices = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
+    print(f'Worker {cfg.training.gpu_rank}: we include sample no. {all_sample_indices[0]}.')
 
     # Spawn worker processes
     print(f"Running worker {cfg.training.gpu_rank} with checkpoint: {ckpt_path}")
