@@ -84,7 +84,10 @@ module load profile/deeplrn
 cd "/leonardo/home/userexternal/$USER/pag-llm"
 
 module load python/3.11.7
-deactivate || true
+# Only deactivate if a virtualenv is active; avoid printing "deactivate: command not found"
+if type deactivate >/dev/null 2>&1; then
+    deactivate
+fi
 source .venv/bin/activate
 
 nvidia-smi
@@ -102,9 +105,8 @@ for i in {0..3}; do
       --gpus=1 \
       --gpu-bind=single:0 \
       --job-name="gpu_task_$i" \
-      .venv/bin/python \
-      run_gcg.py \
-      -u \
+    .venv/bin/python -u \
+    run_gcg.py \
       --config-name "$CONFIG" \
       training.method="$METHOD" \
       +training.gpu_rank="$i" \
