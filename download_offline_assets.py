@@ -209,10 +209,19 @@ def download_from_config(config_path: pathlib.Path, output_dir: pathlib.Path) ->
 
     # Check if external LLM is specified
     if hasattr(cfg, 'model') and cfg.model:
-        model_name = cfg.model.external_llm
-        local_path = pathlib.Path(cfg.model.local_external_llm_path)
-        download_external_llm(model_name, local_path)
-        downloaded_assets['external_llm'] = local_path
+        print(cfg.model)
+        model_name = getattr(cfg.model, "external_llm", None)
+        if model_name:
+            local_path_attr = getattr(cfg.model, "local_external_llm_path", None)
+            if local_path_attr:
+                local_path = pathlib.Path(local_path_attr)
+            else:
+                # If no local path is provided in the config, use a default under output_dir
+                local_path = output_dir / "external_llms" / model_name.replace("/", "_")
+            download_external_llm(model_name, local_path)
+            downloaded_assets['external_llm'] = local_path
+        else:
+            print("Info: 'model.external_llm' not set in config; skipping external LLM download")
     
     return downloaded_assets
 

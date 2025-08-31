@@ -81,7 +81,7 @@ def instantiate_model_by_config(cfg: LLMPagConfig | CustomLLMPagConfig) -> tuple
     return lightning_model, data_module, model_name or lightning_model.model_name
 
 
-def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConfig) -> tuple[
+def load_model_from_checkpoint(path: pathlib.Path | str, current_cfg: CustomLLMPagConfig) -> tuple[
     BaseLMModel, LMDataModule, str, CustomLLMPagConfig]:
     """
     Load a model from a checkpoint file.
@@ -121,6 +121,10 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
     config.training.batch_size = current_cfg.training.batch_size
     config.training.run_evaluation_before_training = current_cfg.training.run_evaluation_before_training
     config.training.gpu_rank = current_cfg.training.gpu_rank
+
+    # Load external LLM if specified
+    config.model.external_llm = current_cfg.model.external_llm
+    config.model.local_external_llm_path = current_cfg.model.local_external_llm_path
 
     # Instantiate model and data module
     lightning_model, data_module, model_name = instantiate_model_by_config(config)
