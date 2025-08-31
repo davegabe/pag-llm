@@ -137,7 +137,7 @@ def main(cfg: CustomLLMPagConfig):
 
     # Determine samples to attack
     dataset = data_module.test_dataset
-    max_samples_to_attack = int(len(dataset) * 0.075)  # Attack at most 7.5% of the test set
+    max_samples_to_attack = int(len(dataset) * 0.3)  # Attack at most 30% of the test set
     torch.manual_seed(0)
     all_sample_indices = torch.randperm(len(dataset))[:max_samples_to_attack].tolist()
     print(f'Worker {cfg.training.gpu_rank}: first of ALL sample indices (must be the same) = {all_sample_indices[0]}.')
