@@ -135,7 +135,8 @@ def main(cfg: CustomLLMPagConfig):
 
         # Compute loss metrics
         orig_losses, attack_losses, kl_divs = _compute_loss_metrics(
-            finished_results, lightning_model, batch_size=128)
+            finished_results, lightning_model, batch_size=128
+        )
         if orig_losses is None or attack_losses is None:
             print(f"Step {step}: missing loss metrics.")
             continue
@@ -145,14 +146,14 @@ def main(cfg: CustomLLMPagConfig):
         successful_samples = int(success_mask.sum().item())
 
         # Compute on successful samples naturalness metrics and
-
         print(f"Step {step}: N_finished={len(finished_results)}, success_rate={sample_success_rate:.4f}, successful={successful_samples}")
-        # Log to wandb
+        # Log to wandb: use fixed metric names and pass `step` so WandB plots steps on the X axis
         wandb.log({
-            f"convergence/{step}/finished_samples": len(finished_results),
-            f"convergence/{step}/sample_success_rate": sample_success_rate,
-            f"convergence/{step}/successful_samples": successful_samples,
-        })
+            "convergence/finished_samples": len(finished_results),
+            "convergence/sample_success_rate": sample_success_rate,
+            "convergence/successful_samples": successful_samples,
+        }, step=step)
+
 
     wandb.finish()
 
