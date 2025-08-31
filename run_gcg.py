@@ -25,7 +25,7 @@ def run_gcg_worker(
     # Set up device
     # Map rank to GPU index. Ensure we pass an integer to set_device to avoid
     # ambiguous behavior across torch versions and with spawn method.
-    gpu_index = int(rank)
+    gpu_index = min(int(rank), torch.cuda.device_count() - 1)
     device = f'cuda:{gpu_index}'
     try:
         torch.cuda.set_device(gpu_index)
