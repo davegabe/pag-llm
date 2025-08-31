@@ -120,6 +120,7 @@ def load_model_from_checkpoint(path: pathlib.Path, current_cfg: CustomLLMPagConf
     config.training.device = current_cfg.training.device
     config.training.batch_size = current_cfg.training.batch_size
     config.training.run_evaluation_before_training = current_cfg.training.run_evaluation_before_training
+    config.training.gpu_rank = current_cfg.training.gpu_rank
 
     # Instantiate model and data module
     lightning_model, data_module, model_name = instantiate_model_by_config(config)
