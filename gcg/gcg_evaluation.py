@@ -1,14 +1,15 @@
 from dataclasses import dataclass
 from typing import Any
+
 import torch
-from tqdm import tqdm
-from infer_backward_tinystories import compute_semantic_similarity, get_batch_perplexity
-from models.base_model import BaseLMModel
-from torch.nn.utils.rnn import pad_sequence
 from sentence_transformers import SentenceTransformer
+from torch.nn.utils.rnn import pad_sequence
+from tqdm import tqdm
 
 from data.data_processor import PreTokenizedDataset, TextDataset
 from gcg import gcg_algorithm, gcg_utils
+from infer_backward_tinystories import compute_semantic_similarity, get_batch_perplexity
+from models.base_model import BaseLMModel
 
 
 @dataclass
@@ -102,6 +103,8 @@ def evaluate_model_with_gcg(
     """
     gcg_utils.set_seeds()
     prefix_len = gcg.num_prefix_tokens
+
+    print(f'Worker {process_rank}: first of MY OWN sample indices (must be different) = {samples_to_attack[0]}.')
 
     if samples_to_attack is None:
         max_samples_to_attack = len(dataset) if max_samples_to_attack is None else max_samples_to_attack
