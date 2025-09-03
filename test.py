@@ -1,7 +1,6 @@
 import dataclasses
 import logging
 import os
-import argparse
 from pathlib import Path
 
 import lightning as pl
@@ -10,7 +9,7 @@ from dotenv import load_dotenv
 from lightning.pytorch.loggers import WandbLogger
 
 from config import CustomLLMPagConfig, LLMPagConfig, apply_config
-from instantiate import instantiate_model_by_config
+from instantiate import load_model_from_checkpoint
 
 # Load environment variables
 load_dotenv()
@@ -39,34 +38,15 @@ def test_model(cfg: LLMPagConfig | CustomLLMPagConfig):
     # Set float32 matmul precision
     torch.set_float32_matmul_precision('medium')
 
-    # Instantiate model and data module
-    lightning_model, data_module, model_name = instantiate_model_by_config(cfg)
-
     # Load the trained model checkpoint if specified
     checkpoint_path = None
     if cfg.model.checkpoint_path:
         checkpoint_path = cfg.model.checkpoint_path
         logger.info(f"Loading model from checkpoint: {checkpoint_path}")
-        # Load from checkpoint using the class method
-        lightning_model = lightning_model.__class__.load_from_checkpoint(
-            checkpoint_path,
-            model=lightning_model.model,
-            tokenizer=lightning_model.tokenizer,
-            config=cfg
+        # Use the dedicated function for loading from checkpoint
+        lightning_model, data_module, model_name, _ = load_model_from_checkpoint(
+            checkpoint_path, cfg
         )
-    elif os.path.exists(cfg.model.output_dir / cfg.training.method / "last.ckpt"):
-        # Try to load the last checkpoint from the training output directory
-        checkpoint_path = cfg.model.output_dir / cfg.training.method / "last.ckpt"
-        logger.info(f"Loading model from last checkpoint: {checkpoint_path}")
-        # Load from checkpoint using the class method
-        lightning_model = lightning_model.__class__.load_from_checkpoint(
-            checkpoint_path,
-            model=lightning_model.model,
-            tokenizer=lightning_model.tokenizer,
-            config=cfg
-        )
-    else:
-        logger.warning("No checkpoint specified or found. Testing with randomly initialized model.")
 
     # Prepare n-gram statistics if the model supports it
     if hasattr(lightning_model, 'prepare_ngram_statistics'):
