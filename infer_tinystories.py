@@ -48,7 +48,8 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
             attention_mask=encoded_input["attention_mask"],
             max_length=256,
             num_return_sequences=1,
-            no_repeat_ngram_size=2,  # To avoid repeating text
+            do_sample=True,
+            top_k=50,
             pad_token_id=lightning_model.tokenizer.pad_token_id,  # Explicitly set pad token id
         )
 
