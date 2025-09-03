@@ -220,10 +220,10 @@ class MaskedIdentityGradEmbeddingsModel(BaseLMModel):
         # Calculate perplexity
         perplexity = torch.exp(loss_ce)
         self.log_dict({
-            'val/loss_ce': loss_ce,
-            'val/loss_mask': loss_grads,
-            'val/perplexity': perplexity,
-            'val/loss': loss,
+            f'{tag}/loss_ce': loss_ce,
+            f'{tag}/loss_mask': loss_grads,
+            f'{tag}/perplexity': perplexity,
+            f'{tag}/loss': loss,
         }, prog_bar=True, sync_dist=True)
 
         # Ensure that the model has no gradients
