@@ -6,11 +6,13 @@ from models.base_model import BaseLMModel
 
 
 def load_model(cfg: CustomLLMPagConfig | LLMPagConfig) -> BaseLMModel:
-    device, prefix_len = 'cuda:0', 5
+    default_device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = cfg.training.device or default_device
     torch.set_float32_matmul_precision('medium')
 
+    # Load model and data
     lightning_model, data_module, module_name, cfg = load_model_from_checkpoint(
-        cfg.model.output_dir / 'tinystories_identity_grad_norm__qp6q1mop.ckpt',
+        cfg.model.checkpoint_path,
         cfg,
     )
     lightning_model.to(device)
@@ -51,7 +53,10 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         )
 
         # Decode and return generated text
-        generated_text = lightning_model.tokenizer.decode(outputs[0], skip_special_tokens=False)
+        generated_text = lightning_model.tokenizer \
+            .decode(outputs[0], skip_special_tokens=True) \
+            .replace(' ', '') \
+            .replace('▁', ' ')
 
         # Remove the text after the EOS, if present
         eos_index = generated_text.find(lightning_model.tokenizer.eos_token)
