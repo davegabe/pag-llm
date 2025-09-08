@@ -132,6 +132,7 @@ def compute_naturalness_metrics(
 def compute_step_metrics(
         orig_losses: torch.Tensor | None,
         attack_losses: torch.Tensor | None,
+        kl_divs: torch.Tensor | None,
         finished_results: list[GCGResult],
         lightning_model: BaseLMModel,
         total_samples: int,
@@ -141,7 +142,7 @@ def compute_step_metrics(
     ) -> dict:
     """Compute all per-step aggregated metrics and return a dict ready for wandb.log."""
     # Defensive defaults
-    if orig_losses is None or attack_losses is None:
+    if orig_losses is None or attack_losses is None or kl_divs is None:
         return {}
 
     delta_losses = orig_losses - attack_losses
@@ -179,6 +180,13 @@ def compute_step_metrics(
         'convergence/delta_loss_mean_fail': mean_sel(delta_losses, fail_idx),
     })
 
+    # KL divergence metrics
+    metrics.update({
+        'convergence/kl_div_mean': mean_sel(kl_divs),
+        'convergence/kl_div_mean_success': mean_sel(kl_divs, success_idx),
+        'convergence/kl_div_mean_fail': mean_sel(kl_divs, fail_idx),
+    })
+
     # naturalness metrics
     nat = compute_naturalness_metrics(finished_results, lightning_model, ext_model, ext_tokenizer, semantic_model)
     metrics['convergence/attack_prefix_ppl_mean'] = nat['mean_attack_prefix_ppl']
@@ -213,6 +221,7 @@ def compute_step_metrics(
 def compute_aggregated_gcg_metrics(
         orig_losses: torch.Tensor | None,
         attack_losses: torch.Tensor | None,
+        kl_divs: torch.Tensor | None,
         all_results: list[GCGResult],
         lightning_model: BaseLMModel,
         cfg: CustomLLMPagConfig,
@@ -224,7 +233,7 @@ def compute_aggregated_gcg_metrics(
 
     This mirrors the previous gcg/* keys but ensures they're written once as summary values.
     """
-    if orig_losses is None or attack_losses is None:
+    if orig_losses is None or attack_losses is None or kl_divs is None:
         return {}
 
     delta_losses = orig_losses - attack_losses
@@ -254,6 +263,14 @@ def compute_aggregated_gcg_metrics(
         'gcg/orig_token_duplications_mean': nat['mean_orig_dup'],
         'gcg/attack_semantic_similarity_mean': nat['mean_semantic_sim'],
     }
+
+    # KL divergence metrics
+    metrics.update({
+        'gcg/kl_div_mean': mean_sel(kl_divs),
+        'gcg/kl_div_mean_success': mean_sel(kl_divs, success_idx),
+        'gcg/kl_div_mean_fail': mean_sel(kl_divs, fail_idx),
+    })
+
     return metrics
 
 
@@ -420,6 +437,7 @@ def main(cfg: CustomLLMPagConfig):
         metrics = compute_step_metrics(
             orig_losses,
             attack_losses,
+            kl_divs,
             finished_results,
             lightning_model,
             total_samples,
@@ -433,7 +451,17 @@ def main(cfg: CustomLLMPagConfig):
         wandb.log(metrics_to_log, step=step)
 
     # Compute run-level aggregated gcg/* metrics and write them once to wandb.summary
-    final_gcg_metrics = compute_aggregated_gcg_metrics(orig_losses, attack_losses, results, lightning_model, cfg, ext_model=ext_model, ext_tokenizer=ext_tokenizer, semantic_model=semantic_model)
+    final_gcg_metrics = compute_aggregated_gcg_metrics(
+        orig_losses,
+        attack_losses,
+        kl_divs,
+        results,
+        lightning_model,
+        cfg,
+        ext_model=ext_model,
+        ext_tokenizer=ext_tokenizer,
+        semantic_model=semantic_model,
+    )
     for k, v in final_gcg_metrics.items():
         wandb.summary[k] = v
 
