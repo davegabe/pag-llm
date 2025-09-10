@@ -1,3 +1,4 @@
+import sys
 import torch
 
 from config import apply_config, CustomLLMPagConfig, LLMPagConfig
@@ -16,7 +17,7 @@ def load_model(cfg: CustomLLMPagConfig | LLMPagConfig) -> BaseLMModel:
         cfg,
     )
     lightning_model.to(device)
-    print(f'Loaded model: {module_name}, {type(lightning_model)}')
+    print(f'Loaded model: {module_name}, {type(lightning_model)}', file=sys.stderr)
 
     # Move model to GPU if available
     lightning_model.to(device)
@@ -32,9 +33,11 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
 
     # Example prompts
     prompts = [
-        "The cat is on",
-        "The pen is on",
-        "Once upon a time, "
+        #"The cat is on",
+        #"The pen is on",
+        #"Once upon a time, ",
+        #"Once there was a",
+        "One day,"
     ]
 
     print("-" * 80)
@@ -46,10 +49,11 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         outputs = lightning_model.model.generate(
             encoded_input["input_ids"],
             attention_mask=encoded_input["attention_mask"],
-            max_length=256,
+            max_length=40,
             num_return_sequences=1,
             do_sample=True,
-            top_k=50,
+            top_p=3,
+            top_k=5,
             pad_token_id=lightning_model.tokenizer.pad_token_id,  # Explicitly set pad token id
         )
 
@@ -57,12 +61,16 @@ def main(cfg: CustomLLMPagConfig | LLMPagConfig):
         generated_text = lightning_model.tokenizer \
             .decode(outputs[0], skip_special_tokens=True) \
             .replace(' ', '') \
-            .replace('▁', ' ')
+            .replace('▁', ' ')[1:]  # Remove leading space added by tokenizer
 
         # Remove the text after the EOS, if present
         eos_index = generated_text.find(lightning_model.tokenizer.eos_token)
         if eos_index != -1:
             generated_text = generated_text[:eos_index]
+
+        # Remove the prefix prompt from the generated text
+        if generated_text.startswith(prompt):
+            generated_text = generated_text[len(prompt):]
 
         print(f"Prompt: {prompt}")
         print(f"Generated: {generated_text}")

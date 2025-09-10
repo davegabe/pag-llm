@@ -10,3 +10,4 @@ wandb/
 /faster-gcg/
 offline_assets/
 best-checkpoints/
+gcg_results/
