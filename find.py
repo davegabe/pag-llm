@@ -4,6 +4,7 @@ import shutil
 import csv
 
 base_ckpt_dir = "checkpoints/tinystories-pretokenized-base"
+other_ckpt_dir = "checkpoints/tinystories-pretokenized-small"
 output_dir = "best-checkpoints"
 log_file = os.path.join(output_dir, "best_checkpoints.csv")
 
@@ -14,8 +15,8 @@ with open(log_file, mode="w", newline="") as csvfile:
     writer = csv.writer(csvfile)
     writer.writerow(["method", "best_checkpoint", "val_loss"])
 
-    for method in sorted(os.listdir(base_ckpt_dir)):
-        if method == "ngram_cache":
+    for method in sorted(os.listdir(base_ckpt_dir) + os.listdir(other_ckpt_dir)):
+        if method == "ngram_cache" or method == "final":
             continue
 
         ckpt_dir = os.path.join(base_ckpt_dir, method)
