@@ -1,5 +1,5 @@
 # PYTHON_SCRIPT=test.py
-PYTHON_SCRIPT=eval_gcg.py
+PYTHON_SCRIPT=reformat_gcg_attacks.py
 
 # Base
 python $PYTHON_SCRIPT --config-name base-small-offline +model.checkpoint_path=best-checkpoints/best-base.ckpt
