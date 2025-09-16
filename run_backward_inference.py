@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
 from gcg.gcg_utils import get_gpu_count
@@ -117,6 +118,15 @@ def backward_inference_worker(
     
     worker_results = []
     
+    # Create progress bar for this worker
+    pbar = tqdm(
+        total=len(samples_for_worker),
+        desc=f"Worker {rank}",
+        position=rank,
+        leave=True,
+        unit="samples"
+    )
+    
     try:
         # Process samples for this worker
         processed_samples = 0
@@ -152,7 +162,8 @@ def backward_inference_worker(
                 # Extract suffix (skip prefix_len tokens from the beginning)
                 suffix_length = t - prefix_len
                 if suffix_length <= 0:
-                    print(f"Worker {rank}: Sample {global_sample_idx} too short, skipping")
+                    pbar.write(f"Worker {rank}: Sample {global_sample_idx} too short, skipping")
+                    pbar.update(1)
                     continue
                 
                 suffix_input_ids = sample_input_ids[prefix_len:t]
@@ -217,17 +228,24 @@ def backward_inference_worker(
                     worker_results.append(result)
                     processed_samples += 1
                     
-                    if processed_samples % 10 == 0:
-                        print(f"Worker {rank}: processed {processed_samples} samples", flush=True)
+                    # Update progress bar
+                    pbar.update(1)
+                    pbar.set_postfix({
+                        'processed': processed_samples,
+                        'rate': f"{processed_samples/(pbar.format_dict.get('elapsed', 1)):.1f} samples/s" if pbar.format_dict.get('elapsed', 0) > 0 else "0.0 samples/s"
+                    })
                         
                 except Exception as e:
-                    print(f"Worker {rank}: Error processing sample {global_sample_idx}: {e}", flush=True)
+                    pbar.write(f"Worker {rank}: Error processing sample {global_sample_idx}: {e}")
+                    pbar.update(1)
                     continue
         
+        pbar.close()
         print(f"Worker {rank}: completed processing {processed_samples} samples", flush=True)
         return worker_results
         
     except Exception as e:
+        pbar.close()
         print(f"Worker {rank}: exception during evaluation: {e}", flush=True)
         raise
 
@@ -278,6 +296,9 @@ def main(cfg: CustomLLMPagConfig):
     torch.manual_seed(0)
     all_sample_indices = torch.randperm(len(dataset))[:max_samples_to_process].tolist()
     print(f'Worker {cfg.training.gpu_rank}: first of ALL sample indices (must be the same) = {all_sample_indices[0]}.')
+    print(f"Total samples in dataset: {len(dataset)}")
+    print(f"Total samples to process: {max_samples_to_process}")
+    print(f"Samples per worker: {len(all_sample_indices[cfg.training.gpu_rank if cfg.training.gpu_rank is not None else 0::world_size])}")
 
     # Run worker
     print(f"Running worker {cfg.training.gpu_rank} with checkpoint: {ckpt_path}")

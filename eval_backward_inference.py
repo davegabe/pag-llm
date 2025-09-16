@@ -5,6 +5,7 @@ from pathlib import Path
 import torch
 from lightning.pytorch.loggers import WandbLogger
 from sentence_transformers import SentenceTransformer
+from tqdm import tqdm
 
 from config import CustomLLMPagConfig, apply_config
 from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
@@ -76,7 +77,15 @@ def compute_backward_inference_metrics(
     total_semantic_similarity = 0.0
     total_bigram_semantic_similarity = 0.0 if baseline_model is not None else None
     
-    for i, result in enumerate(results):
+    # Create progress bar for metric computation
+    pbar = tqdm(
+        results,
+        desc="Computing metrics",
+        unit="samples",
+        total=len(results)
+    )
+    
+    for i, result in enumerate(pbar):
         try:
             # Convert lists back to tensors
             original_input_ids = torch.tensor(result['original_input_ids'], dtype=torch.long)
@@ -143,12 +152,17 @@ def compute_backward_inference_metrics(
                 # For now, we'll skip this complex comparison
                 pass
             
-            if (i + 1) % 50 == 0:
-                print(f"Processed {i + 1}/{len(results)} samples")
+            # Update progress bar with current metrics
+            pbar.set_postfix({
+                'avg_ppl': f"{total_predicted_ppl/(i+1):.1f}",
+                'sem_sim': f"{total_semantic_similarity/(i+1):.3f}"
+            })
                 
         except Exception as e:
-            print(f"Error processing sample {i}: {e}")
+            pbar.write(f"Error processing sample {i}: {e}")
             continue
+    
+    pbar.close()
     
     # Compute aggregate metrics
     actual_samples = len(results)
