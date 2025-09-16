@@ -1,5 +1,6 @@
 import dataclasses
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -337,7 +338,10 @@ def compute_backward_inference_metrics(
         baseline_model: BaseLMModel | None,
         semantic_model: SentenceTransformer,
         evaluator: BackwardInferenceEvaluator,
-        batch_size: int = 32
+        batch_size: int = 32,
+        output_dir: Path | None = None,
+        model_name: str | None = None,
+        use_init: str | None = None
 ) -> tuple[list[dict], dict]:
     """
     Compute comprehensive metrics for backward inference results using optimized batching.
@@ -349,6 +353,9 @@ def compute_backward_inference_metrics(
         semantic_model: Sentence transformer for semantic similarity
         evaluator: Backward inference evaluator
         batch_size: Batch size for processing
+        output_dir: Directory to save best samples (optional)
+        model_name: Model name for file naming (optional)
+        use_init: Initialization strategy for file naming (optional)
         
     Returns:
         tuple: (sample_metrics, aggregate_metrics)
@@ -405,6 +412,29 @@ def compute_backward_inference_metrics(
     # Add aggregated comprehensive metrics
     aggregate_final_metrics.update(aggregated_comprehensive_metrics)
     
+    # Extract and save best samples based on third-party perplexity
+    if output_dir and model_name and use_init:
+        best_samples = extract_and_save_best_samples(
+            results=results,
+            third_party_predicted_ppls=third_party_predicted_ppls,
+            third_party_original_ppls=third_party_original_ppls,
+            semantic_similarities=semantic_similarities,
+            output_dir=output_dir,
+            model_name=model_name,
+            use_init=use_init,
+            top_k=10
+        )
+        
+        # Add best samples info to aggregate metrics for WandB logging
+        aggregate_final_metrics['num_best_samples_saved'] = len(best_samples)
+        if best_samples:
+            aggregate_final_metrics['best_sample_ppl'] = best_samples[0]['metrics']['third_party_predicted_ppl']
+            aggregate_final_metrics['best_sample_improvement'] = best_samples[0]['metrics']['ppl_improvement']
+            aggregate_final_metrics['best_sample_semantic_sim'] = best_samples[0]['metrics']['semantic_similarity']
+    else:
+        print("Warning: Missing parameters for saving best samples (output_dir, model_name, or use_init)")
+        aggregate_final_metrics['num_best_samples_saved'] = 0
+    
     if baseline_model is not None:
         # TODO: Add baseline comparison if needed
         pass
@@ -417,6 +447,196 @@ def compute_backward_inference_metrics(
     print(f"  - Average semantic similarity: {avg_semantic_similarity:.4f}")
     
     return comprehensive_sample_metrics, aggregate_final_metrics
+
+
+def extract_and_save_best_samples(
+    results: List[Dict],
+    third_party_predicted_ppls: List[float],
+    third_party_original_ppls: List[float],
+    semantic_similarities: List[float],
+    output_dir: Path,
+    model_name: str,
+    use_init: str,
+    top_k: int = 10
+) -> List[Dict]:
+    """
+    Extract and save the best performing samples based on third-party perplexity.
+    
+    Args:
+        results: List of individual results
+        third_party_predicted_ppls: Third-party predicted perplexities
+        third_party_original_ppls: Third-party original perplexities
+        semantic_similarities: Semantic similarities
+        output_dir: Directory to save results
+        model_name: Model name for file naming
+        use_init: Initialization strategy for file naming
+        top_k: Number of top samples to save
+        
+    Returns:
+        List of best samples with additional metrics
+    """
+    print(f"\nExtracting top {top_k} best inverted prompts based on third-party perplexity...")
+    
+    # Combine all information for ranking
+    sample_data = []
+    for i, (result, pred_ppl, orig_ppl, sem_sim) in enumerate(zip(
+        results, third_party_predicted_ppls, third_party_original_ppls, semantic_similarities
+    )):
+        ppl_improvement = orig_ppl - pred_ppl
+        ppl_improvement_ratio = pred_ppl / orig_ppl if orig_ppl > 0 else float('inf')
+        
+        sample_data.append({
+            'sample_idx': result.get('sample_idx', i),
+            'original_text': result['original_text'],
+            'predicted_text': result['predicted_text'],
+            'prefix_len': result['prefix_len'],
+            'suffix_length': result['suffix_length'],
+            'use_init': result['use_init'],
+            'beam_size': result['beam_size'],
+            'third_party_predicted_ppl': pred_ppl,
+            'third_party_original_ppl': orig_ppl,
+            'ppl_improvement': ppl_improvement,
+            'ppl_improvement_ratio': ppl_improvement_ratio,
+            'semantic_similarity': sem_sim,
+            # For ranking, we want lower predicted perplexity (better quality)
+            'ranking_score': pred_ppl,
+        })
+    
+    # Sort by predicted perplexity (lower is better)
+    sample_data.sort(key=lambda x: x['ranking_score'])
+    
+    # Take top k samples
+    best_samples = sample_data[:top_k]
+    
+    # Format for better readability
+    formatted_best_samples = []
+    for i, sample in enumerate(best_samples, 1):
+        formatted_sample = {
+            'rank': i,
+            'sample_idx': sample['sample_idx'],
+            'metrics': {
+                'third_party_predicted_ppl': round(sample['third_party_predicted_ppl'], 4),
+                'third_party_original_ppl': round(sample['third_party_original_ppl'], 4),
+                'ppl_improvement': round(sample['ppl_improvement'], 4),
+                'ppl_improvement_ratio': round(sample['ppl_improvement_ratio'], 4),
+                'semantic_similarity': round(sample['semantic_similarity'], 4),
+            },
+            'generation_params': {
+                'prefix_len': sample['prefix_len'],
+                'suffix_length': sample['suffix_length'],
+                'use_init': sample['use_init'],
+                'beam_size': sample['beam_size'],
+            },
+            'texts': {
+                'original_text': sample['original_text'],
+                'predicted_text': sample['predicted_text'],
+            }
+        }
+        formatted_best_samples.append(formatted_sample)
+    
+    # Add metadata about the evaluation run
+    evaluation_metadata = {
+        'evaluation_timestamp': datetime.now().isoformat(),
+        'model_name': model_name,
+        'use_init': use_init,
+        'total_samples_evaluated': len(results),
+        'top_k_selected': top_k,
+        'ranking_criterion': 'third_party_predicted_ppl (lower is better)',
+        'external_llm_used': 'Determined by evaluator configuration'
+    }
+    
+    # Combine metadata and best samples
+    output_data = {
+        'metadata': evaluation_metadata,
+        'best_samples': formatted_best_samples
+    }
+    
+    # Save to JSON file
+    best_samples_file = output_dir / f'best_inverted_prompts_{model_name}_{use_init}_top{top_k}.json'
+    
+    # Ensure output directory exists
+    best_samples_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Saving best samples to: {best_samples_file}")
+    
+    with open(best_samples_file, 'w', encoding='utf-8') as f:
+        json.dump(output_data, f, indent=2, ensure_ascii=False)
+    
+    # Print summary of best samples
+    print(f"\n=== TOP {top_k} BEST INVERTED PROMPTS ===")
+    for i, sample in enumerate(formatted_best_samples[:5], 1):  # Show top 5 in console
+        print(f"\nRank {i}:")
+        print(f"  Sample Index: {sample['sample_idx']}")
+        print(f"  Third-party PPL: {sample['metrics']['third_party_predicted_ppl']:.4f}")
+        print(f"  PPL Improvement: {sample['metrics']['ppl_improvement']:.4f}")
+        print(f"  Semantic Similarity: {sample['metrics']['semantic_similarity']:.4f}")
+        print(f"  Original: {sample['texts']['original_text'][:100]}...")
+        print(f"  Predicted: {sample['texts']['predicted_text'][:100]}...")
+    
+    if len(formatted_best_samples) > 5:
+        print(f"\n... and {len(formatted_best_samples) - 5} more samples saved to file.")
+    
+    print(f"=====================================\n")
+    
+    return formatted_best_samples
+
+
+def log_best_samples_to_wandb(wandb_logger: WandbLogger, output_dir: Path, model_name: str, use_init: str, top_k: int = 10):
+    """
+    Log the best samples to WandB as a table.
+    
+    Args:
+        wandb_logger: WandB logger instance
+        output_dir: Directory where best samples JSON file is saved
+        model_name: Model name for file naming
+        use_init: Initialization strategy for file naming
+        top_k: Number of top samples to log
+    """
+    try:
+        import wandb
+        
+        # Load best samples from the JSON file
+        best_samples_file = output_dir / f'best_inverted_prompts_{model_name}_{use_init}_top{top_k}.json'
+        
+        if not best_samples_file.exists():
+            print(f"Warning: Best samples file not found: {best_samples_file}")
+            return
+        
+        with open(best_samples_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            best_samples = data.get('best_samples', data)  # Handle both old and new formats
+        
+        # Create WandB table
+        columns = [
+            "rank", "sample_idx", "third_party_ppl", "ppl_improvement", 
+            "semantic_similarity", "prefix_len", "original_text", "predicted_text"
+        ]
+        
+        table_data = []
+        for sample in best_samples:
+            # Truncate texts for better table display
+            original_text = sample['texts']['original_text'][:200] + "..." if len(sample['texts']['original_text']) > 200 else sample['texts']['original_text']
+            predicted_text = sample['texts']['predicted_text'][:200] + "..." if len(sample['texts']['predicted_text']) > 200 else sample['texts']['predicted_text']
+            
+            table_data.append([
+                sample['rank'],
+                sample['sample_idx'],
+                sample['metrics']['third_party_predicted_ppl'],
+                sample['metrics']['ppl_improvement'],
+                sample['metrics']['semantic_similarity'],
+                sample['generation_params']['prefix_len'],
+                original_text,
+                predicted_text
+            ])
+        
+        # Log table to WandB
+        table = wandb.Table(columns=columns, data=table_data)
+        wandb_logger.experiment.log({f"best_inverted_prompts_top{top_k}": table})
+        
+        print(f"Successfully logged top {len(best_samples)} best samples to WandB")
+        
+    except Exception as e:
+        print(f"Error logging best samples to WandB: {e}")
 
 
 def print_evaluation_summary(metrics: dict, comprehensive_metrics: dict):
@@ -456,6 +676,15 @@ def print_evaluation_summary(metrics: dict, comprehensive_metrics: dict):
         print(f"Average Bigram Semantic Similarity: {metrics['avg_bigram_semantic_similarity']:.4f}")
         print(f"Bigram vs Predicted PPL Ratio: {metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
         print(f"Semantic Similarity Improvement: {metrics['semantic_similarity_improvement']:.4f}")
+    
+    # Print best samples info if available
+    if 'num_best_samples_saved' in metrics and metrics['num_best_samples_saved'] > 0:
+        print(f"\n--- Best Samples Info ---")
+        print(f"Number of Best Samples Saved: {metrics['num_best_samples_saved']}")
+        if 'best_sample_ppl' in metrics:
+            print(f"Best Sample PPL: {metrics['best_sample_ppl']:.4f}")
+            print(f"Best Sample PPL Improvement: {metrics['best_sample_improvement']:.4f}")
+            print(f"Best Sample Semantic Similarity: {metrics['best_sample_semantic_sim']:.4f}")
     
     print(f"==========================\n")
 
@@ -578,11 +807,18 @@ def main(cfg: CustomLLMPagConfig):
         baseline_model=baseline_model,
         semantic_model=semantic_model,
         evaluator=evaluator,
-        batch_size=batch_size
+        batch_size=batch_size,
+        output_dir=output_dir,
+        model_name=model_name,
+        use_init=use_init
     )
     
     # Log metrics to WandB
     wandb_logger.experiment.log(aggregate_metrics)
+    
+    # Log best samples to WandB if available
+    if 'num_best_samples_saved' in aggregate_metrics and aggregate_metrics['num_best_samples_saved'] > 0:
+        log_best_samples_to_wandb(wandb_logger, output_dir, model_name, use_init)
     
     # Print summary
     comprehensive_metrics = {k: v for k, v in aggregate_metrics.items() 
