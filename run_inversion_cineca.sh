@@ -99,9 +99,6 @@ export HF_EVALUATE_OFFLINE=1
 # Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 10s
 export TQDM_MININTERVAL=30
 
-echo "=== PHASE 1: GENERATION ==="
-echo "Starting parallel backward inference generation on 4 GPUs..."
-
 for i in {0..3}; do
     srun \
       --exclusive \
@@ -118,3 +115,5 @@ for i in {0..3}; do
       "${ADDITIONAL_ARGS[@]}" \
       &
 done
+
+wait
