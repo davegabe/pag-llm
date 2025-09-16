@@ -50,4 +50,4 @@ nvidia-smi
 export TRANSFORMERS_OFFLINE=1
 export WANDB_API_KEY=donotsync
 export WANDB_MODE=offline
-srun python train.py "$@"
+srun .venv/bin/python -u train.py "$@"
