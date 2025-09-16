@@ -2,86 +2,12 @@ import os
 import tempfile
 from dataclasses import dataclass
 from datasets import load_dataset, Dataset, DatasetDict, concatenate_datasets
-from tokenizers import Tokenizer
-from tokenizers.models import BPE
-from tokenizers.trainers import BpeTrainer
-from tokenizers.pre_tokenizers import Metaspace
 from transformers import PreTrainedTokenizerFast
-from huggingface_hub import login, create_repo, upload_folder
+from huggingface_hub import create_repo, upload_folder
 
-# --- Configuration ---
-@dataclass
-class InvFirstDataConfig:
-    """Configuration for the inv-first dataset creation process."""
-    hf_path: str = "fhswf/TinyStoriesV2_cleaned"
-    config_name: str | None = None
-    vocabulary_size: int = 2048
-    max_seq_length: int = 256
-    overlap: float = 0.25
-    
-    # "keep", "remove", "replace_eos", or "split"
-    endoftext_handling: str = "keep"
-    
-    custom_splits: bool = True
-    train_split: float = 0.8
-    test_split: float = 0.1
-    # 1.0 - (train_split + test_split) is validation split
-    
-    # Hugging Face Hub configuration
-    hf_user: str | None = os.getenv("HF_USERNAME")
-    hf_token: str | None = os.getenv("HF_TOKEN")
+from create_dataset import train_new_tokenizer, login_to_hf, DataConfig
 
-# --- Helper Functions ---
-
-def login_to_hf(token: str | None):
-    """Logs into the Hugging Face Hub."""
-    if token:
-        login(token=token)
-    else:
-        print("HF_TOKEN not found. Attempting interactive login.")
-        login()
-
-def train_new_tokenizer(dataset: DatasetDict, config: InvFirstDataConfig) -> PreTrainedTokenizerFast:
-    """Trains a new BPE tokenizer from the dataset text."""
-    print("Step 1: Training new tokenizer...")
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as temp_f:
-        # Combine all splits for robust tokenizer training
-        full_text_dataset = concatenate_datasets([dataset[s] for s in dataset.keys()])
-        for item in full_text_dataset["text"]:
-            temp_f.write(item + "\n")
-        temp_filename = temp_f.name
-
-    # Setup tokenizer and trainer
-    special_tokens = ["<unk>", "<s>", "</s>", "<pad>", "<mask>"]
-    if config.endoftext_handling == "keep":
-        special_tokens.append("<|endoftext|>")
-        
-    tokenizer = Tokenizer(BPE(unk_token="<unk>"))
-    tokenizer.pre_tokenizer = Metaspace()
-    trainer = BpeTrainer(vocab_size=config.vocabulary_size, min_frequency=2, special_tokens=special_tokens)
-    
-    # Train
-    tokenizer.train([temp_filename], trainer)
-    os.remove(temp_filename)
-
-    # Wrap in PreTrainedTokenizerFast for transformers compatibility
-    fast_tokenizer = PreTrainedTokenizerFast(
-        tokenizer_object=tokenizer,
-        unk_token="<unk>",
-        bos_token="<s>",
-        eos_token="</s>",
-        pad_token="<pad>",
-        mask_token="<mask>",
-        add_prefix_space=True,
-    )
-    if config.endoftext_handling == "keep":
-        fast_tokenizer.add_special_tokens({"additional_special_tokens": ["<|endoftext|>"]})
-        
-    print("Tokenizer training complete.")
-    return fast_tokenizer
-
-
-def preprocess_and_chunk_dataset_inv_first(dataset: Dataset, tokenizer: PreTrainedTokenizerFast, config: InvFirstDataConfig) -> Dataset:
+def preprocess_and_chunk_dataset_inv_first(dataset: Dataset, tokenizer: PreTrainedTokenizerFast, config: DataConfig) -> Dataset:
     """Preprocesses text and chunks the dataset for inv-first format."""
     print("Step 2: Preprocessing and chunking dataset for inv-first format...")
     
@@ -193,7 +119,7 @@ def upload_to_hub_inv_first(
 
 # --- Main Orchestrator ---
 
-def create_inv_first_dataset(config: InvFirstDataConfig):
+def create_inv_first_dataset(config: DataConfig):
     """Main function to orchestrate the inv-first dataset creation and upload process."""
     if not config.hf_user:
         raise ValueError("HF_USERNAME environment variable not set.")
@@ -264,7 +190,7 @@ def create_inv_first_dataset(config: InvFirstDataConfig):
 
 if __name__ == "__main__":
     # Configure and run the pipeline
-    pipeline_config = InvFirstDataConfig(
+    pipeline_config = DataConfig(
         hf_path="fhswf/TinyStoriesV2_cleaned",
         vocabulary_size=2048,
         max_seq_length=256,

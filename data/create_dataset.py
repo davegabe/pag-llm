@@ -48,7 +48,11 @@ def train_new_tokenizer(dataset: DatasetDict, config: DataConfig) -> PreTrainedT
         # Combine all splits for robust tokenizer training
         full_text_dataset = concatenate_datasets([dataset[s] for s in dataset.keys()])
         for item in full_text_dataset["text"]:
-            temp_f.write(item + "\n")
+            # Remove special tokens from training data
+            for tok in ["<|endoftext|>"]:
+                item = item.replace(tok, '')
+            # Write to temp file
+            temp_f.write(item.strip() + "\n")
         temp_filename = temp_f.name
 
     # Setup tokenizer and trainer
