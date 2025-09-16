@@ -331,7 +331,7 @@ def compute_comprehensive_metrics_individual(
     return comprehensive_sample_metrics
 
 
-def compute_backward_inference_metrics_optimized(
+def compute_backward_inference_metrics(
         results: list[dict],
         lightning_model: BaseLMModel,
         baseline_model: BaseLMModel | None,
@@ -508,8 +508,8 @@ def main(cfg: CustomLLMPagConfig):
         raise ValueError("No results loaded from files")
     
     # Setup WandB logger for evaluation
-    run_name = f"backward-eval-optimized-{cfg.training.method}-{use_init}"
-    tags = ["backward-eval", "optimized", cfg.training.method, cfg.dataset.name, use_init]
+    run_name = f"backward-eval-{cfg.training.method}-{use_init}"
+    tags = ["backward-eval", cfg.training.method, cfg.dataset.name, use_init]
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
@@ -526,7 +526,6 @@ def main(cfg: CustomLLMPagConfig):
                 'use_init': use_init,
                 'model_name': model_name,
                 'results_files': results_files,
-                'optimized': True,
                 'batch_size': 32,
             }
         },
@@ -571,9 +570,9 @@ def main(cfg: CustomLLMPagConfig):
     external_llm_path = str(cfg.model.local_external_llm_path) or cfg.model.external_llm or "gpt2"
     evaluator = BackwardInferenceEvaluator(forward_model=lightning_module, external_llm=external_llm_path)
     
-    # Compute metrics using optimized approach
+    # Compute metrics
     batch_size = 32  # Adjust based on available VRAM
-    sample_metrics, aggregate_metrics = compute_backward_inference_metrics_optimized(
+    sample_metrics, aggregate_metrics = compute_backward_inference_metrics(
         results=all_results,
         lightning_model=lightning_module,
         baseline_model=baseline_model,

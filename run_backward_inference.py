@@ -292,10 +292,10 @@ def main(cfg: CustomLLMPagConfig):
 
     # Determine samples to process
     dataset = data_module.test_dataset
-    max_samples_to_process = int(len(dataset) * 0.3)  # Process at most 30% of the test set
+    max_samples_to_process = len(dataset)  # Process the entire test set
     torch.manual_seed(0)
-    all_sample_indices = torch.randperm(len(dataset))[:max_samples_to_process].tolist()
-    print(f'Worker {cfg.training.gpu_rank}: first of ALL sample indices (must be the same) = {all_sample_indices[0]}.')
+    all_sample_indices = list(range(len(dataset)))  # Use all samples in order
+    print(f'Worker {cfg.training.gpu_rank}: Processing entire test dataset.')
     print(f"Total samples in dataset: {len(dataset)}")
     print(f"Total samples to process: {max_samples_to_process}")
     print(f"Samples per worker: {len(all_sample_indices[cfg.training.gpu_rank if cfg.training.gpu_rank is not None else 0::world_size])}")
