@@ -422,7 +422,7 @@ def compute_backward_inference_metrics(
             output_dir=output_dir,
             model_name=model_name,
             use_init=use_init,
-            top_k=10
+            top_k=30
         )
         
         # Add best samples info to aggregate metrics for WandB logging
@@ -457,7 +457,7 @@ def extract_and_save_best_samples(
     output_dir: Path,
     model_name: str,
     use_init: str,
-    top_k: int = 10
+    top_k: int = 30
 ) -> List[Dict]:
     """
     Extract and save the best performing samples based on third-party perplexity.
