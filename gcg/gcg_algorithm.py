@@ -199,7 +199,19 @@ class GCG:
         loss = self._compute_gcg_loss(attack_one_hot, target_ids, target_embeds)[0]
 
         attack_one_hot_grads = torch.autograd.grad(loss, attack_one_hot)[0][0]
-        attack_one_hot_grads /= attack_one_hot_grads.norm(dim=-1, keepdim=True)
+
+        # Normalize gradients safely to avoid division by zero or NaN issues
+        grad_norms = attack_one_hot_grads.norm(dim=-1, keepdim=True)
+        # Add small epsilon to avoid division by zero and clamp to avoid extreme values
+        grad_norms = torch.clamp(grad_norms, min=1e-8)
+        attack_one_hot_grads = attack_one_hot_grads / grad_norms
+        
+        # Check for NaN or inf values and replace them with zeros
+        attack_one_hot_grads = torch.where(
+            torch.isfinite(attack_one_hot_grads), 
+            attack_one_hot_grads, 
+            torch.zeros_like(attack_one_hot_grads)
+        )
 
         # Now, for each token in the prefix, we need to find the top-k replacements with the lowest gradient
         best_replacements = torch.topk(attack_one_hot_grads, self.top_k, dim=-1, largest=False).indices
@@ -265,11 +277,25 @@ class GCG:
 
             with torch.no_grad():
                 prefixes_loss = self._compute_gcg_loss(proposed_prefixes, target_ids, target_embeds)
+                
+                # Check for invalid loss values and handle them
+                if torch.isnan(prefixes_loss).any() or torch.isinf(prefixes_loss).any():
+                    # Replace NaN/inf with large finite values
+                    prefixes_loss = torch.where(
+                        torch.isfinite(prefixes_loss), 
+                        prefixes_loss, 
+                        torch.full_like(prefixes_loss, 1e6)
+                    )
+                
                 best_prefix_index = torch.argmin(prefixes_loss)
+                
+                # Ensure the index is valid
+                if best_prefix_index >= len(prefixes_loss):
+                    best_prefix_index = torch.tensor(0, device=prefixes_loss.device)
 
-        best_prefix_loss = prefixes_loss[best_prefix_index]
-        best_prefix = proposed_prefixes[best_prefix_index]
-        return best_prefix, best_prefix_loss
+            best_prefix_loss = prefixes_loss[best_prefix_index]
+            best_prefix = proposed_prefixes[best_prefix_index]            
+            return best_prefix, best_prefix_loss
 
     @torch.no_grad()
     def _batch_embed_target_message(self, target_message: str) -> tuple[torch.Tensor, torch.Tensor]:
