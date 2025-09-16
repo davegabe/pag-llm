@@ -10,5 +10,5 @@ sbatch run_job_cineca.sh --config-name pag-identity-small-offline training.metho
 sbatch run_job_cineca.sh --config-name pag-identity-small-offline training.method="val-bert-like"
 
 # Inv first
-sbatch run_job_cineca.sh --config-name pag-identity-small-offline training.method="inv-first"
-sbatch run_job_cineca.sh --config-name pag-identity-small-offline training.method="val-inv-first"
+sbatch run_job_cineca.sh --config-name inv-first-small-offline training.method="inv-first"
+sbatch run_job_cineca.sh --config-name inv-first-small-offline training.method="val-inv-first"
