@@ -784,7 +784,7 @@ def main(cfg: CustomLLMPagConfig):
         print(f"Method {cfg.training.method} need to use PAD for initialization, ")
         use_init = 'pad'
     elif "identity-grad" in cfg.training.method or cfg.training.method == "base":
-        print(f"Method {cfg.training.method} need to use PAG for initialization, ")
+        print(f"Method {cfg.training.method} need to use BIGRAM for initialization, ")
         use_init = 'bigram'
     else:
         raise ValueError(f"Unsupported training method: {cfg.training.method}. ")
