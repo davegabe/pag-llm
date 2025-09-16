@@ -1,11 +1,13 @@
 import dataclasses
 import json
 from pathlib import Path
+from typing import List, Dict, Any
 
 import torch
 from lightning.pytorch.loggers import WandbLogger
 from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
+import numpy as np
 
 from config import CustomLLMPagConfig, apply_config
 from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
@@ -48,15 +50,297 @@ def load_backward_inference_results(results_files: list[str]) -> list[dict]:
     return all_results
 
 
-def compute_backward_inference_metrics(
+def prepare_batched_data(results: List[Dict], batch_size: int, device: torch.device) -> List[Dict]:
+    """
+    Prepare batched data for efficient processing.
+    
+    Args:
+        results: List of individual results
+        batch_size: Size of batches to create
+        device: Device to move tensors to
+        
+    Returns:
+        List of batched data dictionaries
+    """
+    print(f"Preparing batched data with batch_size={batch_size}...")
+    
+    batched_data = []
+    
+    for i in range(0, len(results), batch_size):
+        batch_results = results[i:i + batch_size]
+        
+        # Collect all texts for this batch
+        original_texts = [r['original_text'] for r in batch_results]
+        predicted_texts = [r['predicted_text'] for r in batch_results]
+        
+        # Prepare tensor data
+        batch_data = {
+            'batch_results': batch_results,
+            'original_texts': original_texts,
+            'predicted_texts': predicted_texts,
+            'batch_size': len(batch_results),
+            'start_idx': i,
+            'end_idx': i + len(batch_results)
+        }
+        
+        # Convert token data to tensors and pad if needed
+        max_orig_len = max(len(r['original_input_ids']) for r in batch_results)
+        max_pred_len = max(len(r['predicted_input_ids']) for r in batch_results)
+        
+        original_input_ids_batch = []
+        original_attention_mask_batch = []
+        predicted_input_ids_batch = []
+        predicted_attention_mask_batch = []
+        
+        for result in batch_results:
+            # Original data
+            orig_ids = result['original_input_ids'] + [0] * (max_orig_len - len(result['original_input_ids']))
+            orig_mask = result['original_attention_mask'] + [0] * (max_orig_len - len(result['original_attention_mask']))
+            original_input_ids_batch.append(orig_ids)
+            original_attention_mask_batch.append(orig_mask)
+            
+            # Predicted data
+            pred_ids = result['predicted_input_ids'] + [0] * (max_pred_len - len(result['predicted_input_ids']))
+            pred_mask = result['predicted_attention_mask'] + [0] * (max_pred_len - len(result['predicted_attention_mask']))
+            predicted_input_ids_batch.append(pred_ids)
+            predicted_attention_mask_batch.append(pred_mask)
+        
+        # Convert to tensors and move to device
+        batch_data.update({
+            'original_input_ids': torch.tensor(original_input_ids_batch, dtype=torch.long, device=device),
+            'original_attention_mask': torch.tensor(original_attention_mask_batch, dtype=torch.long, device=device),
+            'predicted_input_ids': torch.tensor(predicted_input_ids_batch, dtype=torch.long, device=device),
+            'predicted_attention_mask': torch.tensor(predicted_attention_mask_batch, dtype=torch.long, device=device),
+        })
+        
+        batched_data.append(batch_data)
+    
+    print(f"Created {len(batched_data)} batches")
+    return batched_data
+
+
+def compute_batched_perplexities(batched_data: List[Dict], lightning_model: BaseLMModel) -> tuple[List[float], List[float]]:
+    """
+    Compute perplexities for all samples in batch mode.
+    
+    Args:
+        batched_data: List of batched data
+        lightning_model: The model to use for perplexity computation
+        
+    Returns:
+        Tuple of (predicted_ppls, original_ppls) for each sample
+    """
+    print("Computing batched perplexities...")
+    
+    all_predicted_ppls = []
+    all_original_ppls = []
+    
+    lightning_model.eval()
+    with torch.no_grad():
+        for batch_data in tqdm(batched_data, desc="Computing perplexities"):
+            # Compute predicted perplexities
+            predicted_ppls = get_batch_perplexity(
+                lightning_model,
+                batch_data['predicted_input_ids'],
+                batch_data['predicted_attention_mask']
+            )
+            all_predicted_ppls.extend(predicted_ppls.cpu().tolist())
+            
+            # Compute original perplexities
+            original_ppls = get_batch_perplexity(
+                lightning_model,
+                batch_data['original_input_ids'],
+                batch_data['original_attention_mask']
+            )
+            all_original_ppls.extend(original_ppls.cpu().tolist())
+    
+    return all_predicted_ppls, all_original_ppls
+
+
+def compute_batched_semantic_similarities(batched_data: List[Dict], semantic_model: SentenceTransformer) -> List[float]:
+    """
+    Compute semantic similarities for all samples in batch mode.
+    
+    Args:
+        batched_data: List of batched data
+        semantic_model: Sentence transformer model
+        
+    Returns:
+        List of semantic similarity values for each sample
+    """
+    print("Computing batched semantic similarities...")
+    
+    all_similarities = []
+    
+    for batch_data in tqdm(batched_data, desc="Computing semantic similarities"):
+        # Compute embeddings for the entire batch
+        original_texts = batch_data['original_texts']
+        predicted_texts = batch_data['predicted_texts']
+        
+        # Encode in batches for efficiency
+        original_embeddings = semantic_model.encode(original_texts, convert_to_tensor=True)
+        predicted_embeddings = semantic_model.encode(predicted_texts, convert_to_tensor=True)
+        
+        # Compute cosine similarities
+        similarities = torch.nn.functional.cosine_similarity(
+            original_embeddings, predicted_embeddings, dim=1
+        )
+        
+        all_similarities.extend(similarities.cpu().tolist())
+    
+    return all_similarities
+
+
+def compute_batched_third_party_perplexities(batched_data: List[Dict], external_llm: str) -> tuple[List[float], List[float]]:
+    """
+    Compute third-party perplexities for all samples in batch mode.
+    
+    Args:
+        batched_data: List of batched data
+        external_llm: External LLM model name/path
+        
+    Returns:
+        Tuple of (predicted_ppls, original_ppls)
+    """
+    print("Computing third-party perplexities...")
+    
+    import evaluate
+    perplexity_evaluator = evaluate.load("perplexity", module_type="metric")
+    
+    all_predicted_texts = []
+    all_original_texts = []
+    
+    # Collect all texts and limit to 50 words each
+    for batch_data in batched_data:
+        for pred_text, orig_text in zip(batch_data['predicted_texts'], batch_data['original_texts']):
+            pred_limited = ' '.join(pred_text.split()[:50])
+            orig_limited = ' '.join(orig_text.split()[:50])
+            all_predicted_texts.append(pred_limited)
+            all_original_texts.append(orig_limited)
+    
+    # Compute perplexities for all texts at once
+    all_texts = all_predicted_texts + all_original_texts
+    
+    print(f"Computing perplexities for {len(all_texts)} texts using {external_llm}...")
+    
+    results = perplexity_evaluator.compute(
+        model_id=external_llm,
+        predictions=all_texts,
+        add_start_token=False,
+        batch_size=16  # Process in smaller batches to avoid memory issues
+    )
+    
+    perplexities = results['perplexities'] if results is not None else [float('inf')] * len(all_texts)
+    
+    # Split back into predicted and original
+    mid_point = len(all_predicted_texts)
+    predicted_ppls = perplexities[:mid_point]
+    original_ppls = perplexities[mid_point:]
+    
+    return predicted_ppls, original_ppls
+
+
+def compute_comprehensive_metrics_individual(
+    results: List[Dict],
+    predicted_ppls: List[float],
+    original_ppls: List[float],
+    semantic_similarities: List[float],
+    third_party_predicted_ppls: List[float],
+    third_party_original_ppls: List[float],
+    lightning_model: BaseLMModel,
+    evaluator: BackwardInferenceEvaluator
+) -> List[Dict]:
+    """
+    Compute remaining individual metrics that require per-sample processing.
+    
+    Args:
+        results: List of individual results
+        predicted_ppls: Pre-computed predicted perplexities
+        original_ppls: Pre-computed original perplexities
+        semantic_similarities: Pre-computed semantic similarities
+        third_party_predicted_ppls: Pre-computed third-party predicted perplexities
+        third_party_original_ppls: Pre-computed third-party original perplexities
+        lightning_model: Main model
+        evaluator: Evaluator instance
+        
+    Returns:
+        List of comprehensive metrics for each sample
+    """
+    print("Computing remaining individual metrics...")
+    
+    comprehensive_sample_metrics = []
+    device = lightning_model.device
+    
+    for i, result in enumerate(tqdm(results, desc="Individual metrics")):
+        try:
+            # Convert to tensors
+            original_input_ids = torch.tensor(result['original_input_ids'], dtype=torch.long, device=device)
+            original_attention_mask = torch.tensor(result['original_attention_mask'], dtype=torch.long, device=device)
+            predicted_input_ids = torch.tensor(result['predicted_input_ids'], dtype=torch.long, device=device)
+            predicted_attention_mask = torch.tensor(result['predicted_attention_mask'], dtype=torch.long, device=device)
+            
+            # Extract prefix and suffix data
+            prefix_len = result['prefix_len']
+            original_prefix_ids = original_input_ids[:prefix_len]
+            predicted_prefix_ids = predicted_input_ids[:prefix_len]
+            suffix_ids = torch.tensor(result['suffix_input_ids'], dtype=torch.long, device=device)
+            
+            original_prefix_mask = original_attention_mask[:prefix_len]
+            predicted_prefix_mask = predicted_attention_mask[:prefix_len]
+            suffix_mask = torch.tensor(result['suffix_attention_mask'], dtype=torch.long, device=device)
+            
+            # Compute token overlap metrics
+            overlap_metrics = evaluator.compute_token_overlap_metrics(
+                original_prefix_ids, predicted_prefix_ids,
+                original_prefix_mask, predicted_prefix_mask
+            )
+            
+            # Compute positional accuracy metrics
+            positional_metrics = evaluator.compute_positional_accuracy(
+                original_prefix_ids, predicted_prefix_ids,
+                original_prefix_mask, predicted_prefix_mask
+            )
+            
+            # Compute forward coherence metrics
+            coherence_metrics = evaluator.compute_forward_coherence(
+                predicted_prefix_ids, suffix_ids,
+                predicted_prefix_mask, suffix_mask
+            )
+            
+            # Combine all metrics
+            sample_metrics = {
+                **overlap_metrics,
+                **positional_metrics,
+                **coherence_metrics,
+                'predicted_perplexity': third_party_predicted_ppls[i],
+                'original_perplexity': third_party_original_ppls[i],
+                # Add the pre-computed batch metrics as additional references
+                'batch_predicted_ppl': predicted_ppls[i],
+                'batch_original_ppl': original_ppls[i],
+                'semantic_similarity': semantic_similarities[i],
+            }
+            
+            comprehensive_sample_metrics.append(sample_metrics)
+            
+        except Exception as e:
+            print(f"Error processing sample {i}: {e}")
+            # Add empty metrics to maintain alignment
+            comprehensive_sample_metrics.append({})
+            continue
+    
+    return comprehensive_sample_metrics
+
+
+def compute_backward_inference_metrics_optimized(
         results: list[dict],
         lightning_model: BaseLMModel,
         baseline_model: BaseLMModel | None,
         semantic_model: SentenceTransformer,
-        evaluator: BackwardInferenceEvaluator
+        evaluator: BackwardInferenceEvaluator,
+        batch_size: int = 32
 ) -> tuple[list[dict], dict]:
     """
-    Compute comprehensive metrics for backward inference results.
+    Compute comprehensive metrics for backward inference results using optimized batching.
     
     Args:
         results: List of backward inference results
@@ -64,111 +348,44 @@ def compute_backward_inference_metrics(
         baseline_model: Baseline model for comparison (optional)
         semantic_model: Sentence transformer for semantic similarity
         evaluator: Backward inference evaluator
+        batch_size: Batch size for processing
         
     Returns:
         tuple: (sample_metrics, aggregate_metrics)
     """
-    print("Computing comprehensive metrics for backward inference results...")
+    print("Computing comprehensive metrics for backward inference results (OPTIMIZED)...")
     
-    comprehensive_sample_metrics = []
-    total_predicted_ppl = 0.0
-    total_original_ppl = 0.0
-    total_bigram_ppl = 0.0 if baseline_model is not None else None
-    total_semantic_similarity = 0.0
-    total_bigram_semantic_similarity = 0.0 if baseline_model is not None else None
+    device = lightning_model.device
     
-    # Create progress bar for metric computation
-    pbar = tqdm(
-        results,
-        desc="Computing metrics",
-        unit="samples",
-        total=len(results)
+    # Prepare batched data
+    batched_data = prepare_batched_data(results, batch_size, device)
+    
+    # Compute all perplexities in batch mode
+    predicted_ppls, original_ppls = compute_batched_perplexities(batched_data, lightning_model)
+    
+    # Compute all semantic similarities in batch mode
+    semantic_similarities = compute_batched_semantic_similarities(batched_data, semantic_model)
+    
+    # Compute third-party perplexities in batch mode
+    external_llm_path = str(evaluator.external_llm)
+    third_party_predicted_ppls, third_party_original_ppls = compute_batched_third_party_perplexities(
+        batched_data, external_llm_path
     )
     
-    for i, result in enumerate(pbar):
-        try:
-            # Convert lists back to tensors
-            original_input_ids = torch.tensor(result['original_input_ids'], dtype=torch.long)
-            original_attention_mask = torch.tensor(result['original_attention_mask'], dtype=torch.long)
-            predicted_input_ids = torch.tensor(result['predicted_input_ids'], dtype=torch.long)
-            predicted_attention_mask = torch.tensor(result['predicted_attention_mask'], dtype=torch.long)
-            
-            # Move to device
-            device = lightning_model.device
-            original_input_ids = original_input_ids.to(device)
-            original_attention_mask = original_attention_mask.to(device)
-            predicted_input_ids = predicted_input_ids.to(device)
-            predicted_attention_mask = predicted_attention_mask.to(device)
-            
-            # Compute perplexities
-            predicted_ppl = get_batch_perplexity(
-                lightning_model, 
-                predicted_input_ids.unsqueeze(0), 
-                predicted_attention_mask.unsqueeze(0)
-            ).item()
-            
-            original_ppl = get_batch_perplexity(
-                lightning_model,
-                original_input_ids.unsqueeze(0),
-                original_attention_mask.unsqueeze(0)
-            ).item()
-            
-            # Compute semantic similarity
-            original_text = result['original_text']
-            predicted_text = result['predicted_text']
-            semantic_sim = compute_semantic_similarity(original_text, predicted_text, semantic_model)
-            
-            # Accumulate totals
-            total_predicted_ppl += predicted_ppl
-            total_original_ppl += original_ppl
-            total_semantic_similarity += semantic_sim
-            
-            # Compute comprehensive metrics using evaluator
-            prefix_len = result['prefix_len']
-            original_prefix_ids = original_input_ids[:prefix_len]
-            predicted_prefix_ids = predicted_input_ids[:prefix_len]
-            suffix_ids = torch.tensor(result['suffix_input_ids'], dtype=torch.long).to(device)
-            
-            # Create attention masks
-            original_prefix_mask = original_attention_mask[:prefix_len]
-            predicted_prefix_mask = predicted_attention_mask[:prefix_len]
-            suffix_mask = torch.tensor(result['suffix_attention_mask'], dtype=torch.long).to(device)
-            
-            sample_metrics = evaluator.compute_comprehensive_metrics(
-                reference_prefix=original_prefix_ids,
-                generated_prefix=predicted_prefix_ids,
-                true_suffix=suffix_ids,
-                reference_prefix_mask=original_prefix_mask,
-                generated_prefix_mask=predicted_prefix_mask,
-                suffix_mask=suffix_mask,
-                predicted_overall_text=predicted_text,
-                original_overall_text=original_text
-            )
-            comprehensive_sample_metrics.append(sample_metrics)
-            
-            # Baseline comparison if available
-            if baseline_model is not None and result['use_init'] == 'bigram':
-                # For bigram baseline, we would need to generate baseline predictions
-                # For now, we'll skip this complex comparison
-                pass
-            
-            # Update progress bar with current metrics
-            pbar.set_postfix({
-                'avg_ppl': f"{total_predicted_ppl/(i+1):.1f}",
-                'sem_sim': f"{total_semantic_similarity/(i+1):.3f}"
-            })
-                
-        except Exception as e:
-            pbar.write(f"Error processing sample {i}: {e}")
-            continue
-    
-    pbar.close()
+    # Compute remaining individual metrics
+    comprehensive_sample_metrics = compute_comprehensive_metrics_individual(
+        results, predicted_ppls, original_ppls, semantic_similarities,
+        third_party_predicted_ppls, third_party_original_ppls,
+        lightning_model, evaluator
+    )
     
     # Compute aggregate metrics
     actual_samples = len(results)
-    avg_predicted_ppl = total_predicted_ppl / actual_samples
-    avg_original_ppl = total_original_ppl / actual_samples
-    avg_semantic_similarity = total_semantic_similarity / actual_samples
+    avg_predicted_ppl = np.mean(predicted_ppls)
+    avg_original_ppl = np.mean(original_ppls)
+    avg_semantic_similarity = np.mean(semantic_similarities)
+    avg_third_party_predicted_ppl = np.mean(third_party_predicted_ppls)
+    avg_third_party_original_ppl = np.mean(third_party_original_ppls)
     
     # Aggregate comprehensive metrics
     aggregated_comprehensive_metrics = aggregate_metrics(comprehensive_sample_metrics)
@@ -177,23 +394,27 @@ def compute_backward_inference_metrics(
         'avg_predicted_overall_ppl': avg_predicted_ppl,
         'avg_original_overall_ppl': avg_original_ppl,
         'avg_semantic_similarity': avg_semantic_similarity,
+        'avg_third_party_predicted_ppl': avg_third_party_predicted_ppl,
+        'avg_third_party_original_ppl': avg_third_party_original_ppl,
         'ppl_improvement': avg_original_ppl - avg_predicted_ppl,
         'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
+        'third_party_ppl_improvement': avg_third_party_original_ppl - avg_third_party_predicted_ppl,
         'actual_samples_used': actual_samples,
     }
     
     # Add aggregated comprehensive metrics
     aggregate_final_metrics.update(aggregated_comprehensive_metrics)
     
-    if total_bigram_ppl is not None:
-        avg_bigram_ppl = total_bigram_ppl / actual_samples
-        avg_bigram_semantic_similarity = (total_bigram_semantic_similarity or 0.0) / actual_samples
-        aggregate_final_metrics.update({
-            'avg_bigram_overall_ppl': avg_bigram_ppl,
-            'avg_bigram_semantic_similarity': avg_bigram_semantic_similarity,
-            'bigram_vs_predicted_ppl_ratio': avg_predicted_ppl / avg_bigram_ppl if avg_bigram_ppl > 0 else float('inf'),
-            'semantic_similarity_improvement': avg_semantic_similarity - avg_bigram_semantic_similarity,
-        })
+    if baseline_model is not None:
+        # TODO: Add baseline comparison if needed
+        pass
+    
+    print(f"Optimization summary:")
+    print(f"  - Processed {actual_samples} samples")
+    print(f"  - Used batch size: {batch_size}")
+    print(f"  - Created {len(batched_data)} batches")
+    print(f"  - Average PPL improvement: {avg_original_ppl - avg_predicted_ppl:.2f}")
+    print(f"  - Average semantic similarity: {avg_semantic_similarity:.4f}")
     
     return comprehensive_sample_metrics, aggregate_final_metrics
 
@@ -207,6 +428,12 @@ def print_evaluation_summary(metrics: dict, comprehensive_metrics: dict):
     print(f"Average Semantic Similarity: {metrics['avg_semantic_similarity']:.4f}")
     print(f"PPL Improvement: {metrics['ppl_improvement']:.2f}")
     print(f"PPL Improvement Ratio: {metrics['ppl_improvement_ratio']:.3f}")
+    
+    if 'avg_third_party_predicted_ppl' in metrics:
+        print(f"\n--- Third-Party Model Metrics ---")
+        print(f"Average Third-Party Predicted PPL: {metrics['avg_third_party_predicted_ppl']:.2f}")
+        print(f"Average Third-Party Original PPL: {metrics['avg_third_party_original_ppl']:.2f}")
+        print(f"Third-Party PPL Improvement: {metrics['third_party_ppl_improvement']:.2f}")
     
     # Print comprehensive metrics summary
     print(f"\n--- Token Overlap Metrics ---")
@@ -222,8 +449,6 @@ def print_evaluation_summary(metrics: dict, comprehensive_metrics: dict):
     print(f"\n--- Forward Coherence Metrics ---")
     print(f"Mean Forward Coherence PPL: {comprehensive_metrics.get('mean_forward_coherence_ppl', float('inf')):.2f}")
     print(f"Mean Forward Coherence Loss: {comprehensive_metrics.get('mean_forward_coherence_loss', float('inf')):.4f}")
-    print(f"Mean 3rd-Party Original txt PPL: {comprehensive_metrics.get('original_perplexity', float('inf')):.2f}")
-    print(f"Mean 3rd-Party Predicted txt PPL: {comprehensive_metrics.get('predicted_perplexity', float('inf')):.2f}")
 
     if 'avg_bigram_overall_ppl' in metrics:
         print(f"\n--- Bigram Baseline Comparison ---")
@@ -283,8 +508,8 @@ def main(cfg: CustomLLMPagConfig):
         raise ValueError("No results loaded from files")
     
     # Setup WandB logger for evaluation
-    run_name = f"backward-eval-{cfg.training.method}-{use_init}"
-    tags = ["backward-eval", cfg.training.method, cfg.dataset.name, use_init]
+    run_name = f"backward-eval-optimized-{cfg.training.method}-{use_init}"
+    tags = ["backward-eval", "optimized", cfg.training.method, cfg.dataset.name, use_init]
     if cfg.training.method == "pag-hidden":
         run_name += f"-{cfg.model.hidden_layer_index}-classes-{cfg.training.pag_classes}"
         tags += [f"layer-{cfg.model.hidden_layer_index}", f"pag-classes-{cfg.training.pag_classes}"]
@@ -301,6 +526,8 @@ def main(cfg: CustomLLMPagConfig):
                 'use_init': use_init,
                 'model_name': model_name,
                 'results_files': results_files,
+                'optimized': True,
+                'batch_size': 32,
             }
         },
     )
@@ -344,13 +571,15 @@ def main(cfg: CustomLLMPagConfig):
     external_llm_path = str(cfg.model.local_external_llm_path) or cfg.model.external_llm or "gpt2"
     evaluator = BackwardInferenceEvaluator(forward_model=lightning_module, external_llm=external_llm_path)
     
-    # Compute metrics
-    sample_metrics, aggregate_metrics = compute_backward_inference_metrics(
+    # Compute metrics using optimized approach
+    batch_size = 32  # Adjust based on available VRAM
+    sample_metrics, aggregate_metrics = compute_backward_inference_metrics_optimized(
         results=all_results,
         lightning_model=lightning_module,
         baseline_model=baseline_model,
         semantic_model=semantic_model,
-        evaluator=evaluator
+        evaluator=evaluator,
+        batch_size=batch_size
     )
     
     # Log metrics to WandB
@@ -364,7 +593,7 @@ def main(cfg: CustomLLMPagConfig):
     # Finish WandB run
     wandb_logger.experiment.finish()
     
-    print(f"Evaluation completed for {len(all_results)} samples")
+    print(f"Optimized evaluation completed for {len(all_results)} samples")
 
 
 if __name__ == '__main__':
