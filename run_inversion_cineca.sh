@@ -99,6 +99,9 @@ export HF_EVALUATE_OFFLINE=1
 # Reduce tqdm logging frequency to avoid filling SLURM logs; set minimum interval to 10s
 export TQDM_MININTERVAL=30
 
+echo "=== PHASE 1: GENERATION ==="
+echo "Starting parallel backward inference generation on 4 GPUs..."
+
 for i in {0..3}; do
     srun \
       --exclusive \
@@ -115,5 +118,27 @@ for i in {0..3}; do
       "${ADDITIONAL_ARGS[@]}" \
       &
 done
+
+wait
+
+echo "=== PHASE 2: EVALUATION ==="
+echo "Starting backward inference evaluation..."
+
+# Run evaluation on single GPU (it will load all worker results)
+srun \
+  --exclusive \
+  -n 1 \
+  --gpus=1 \
+  --gpu-bind=single:0 \
+  --job-name="backward_eval" \
+.venv/bin/python -u \
+eval_backward_inference.py \
+  --config-name "$CONFIG" \
+  training.method="$METHOD" \
+  +model.checkpoint_path="$CHECKPOINT" \
+  "${ADDITIONAL_ARGS[@]}"
+
+echo "=== COMPLETED ==="
+echo "Backward inference generation and evaluation completed successfully."
 
 wait
