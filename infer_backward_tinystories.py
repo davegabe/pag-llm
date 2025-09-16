@@ -341,8 +341,8 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
     repeated_attn_mask = suffix_attention_mask.repeat(beam_size, 1)
     assert repeated_suffix_input_ids.ndim == 2, \
         f'suffix_input_ids shape mismatch: {repeated_suffix_input_ids.shape} != (batch_size, seq_len)'
-    assert repeated_suffix_input_ids.shape == (beam_size, *suffix_input_ids.shape), \
-        f'suffix_input_ids shape mismatch: {repeated_suffix_input_ids.shape} != ({beam_size}, {suffix_input_ids.shape})'
+    assert repeated_suffix_input_ids.shape == (beam_size, suffix_input_ids.shape[1]), \
+        f'suffix_input_ids shape mismatch: {repeated_suffix_input_ids.shape} != ({beam_size}, {suffix_input_ids.shape[1]})'
 
     prefix_tokens = torch.zeros((beam_size, prefix_tokens_len,), dtype=torch.int64, device=suffix_input_ids.device)
     prefix_attn_mask = torch.zeros_like(prefix_tokens, dtype=torch.int64, device=suffix_input_ids.device)
@@ -355,8 +355,8 @@ def backward_infer_bigram_only(bigram_counts: torch.Tensor | None,
                                                                                                              1)
         candidate_sentences_attn_mask = torch.cat([prefix_attn_mask[:, i:], repeated_attn_mask], dim=1).repeat(
             beam_size, 1)
-        assert candidate_sentences_ids.shape == (beam_size ** 2, prefix_tokens_len - i + suffix_input_ids.shape[0]), \
-            f'candidate_sentences_ids shape mismatch: {candidate_sentences_ids.shape} != ({beam_size}, {beam_size}, {prefix_tokens_len - i + suffix_input_ids.shape[0]})'
+        assert candidate_sentences_ids.shape == (beam_size ** 2, prefix_tokens_len - i + suffix_input_ids.shape[1]), \
+            f'candidate_sentences_ids shape mismatch: {candidate_sentences_ids.shape} != ({beam_size ** 2}, {prefix_tokens_len - i + suffix_input_ids.shape[1]})'
         assert candidate_sentences_attn_mask.shape == candidate_sentences_ids.shape, \
             f'candidate_sentences_attn_mask shape mismatch: {candidate_sentences_attn_mask.shape} != {candidate_sentences_ids.shape}'
 
