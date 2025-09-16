@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import re
 from typing import Any
 import torch
 import wandb
@@ -76,7 +77,14 @@ def compute_naturalness_metrics(
 
     Returns a dict with keys: mean_attack_prefix_ppl, mean_orig_prefix_ppl, mean_attack_dup, mean_semantic_sim
     """
-    attack_texts = [r.x_attack_str for r in finished_results]
+    # Reformat strings: replace \u2581 with space, normalize whitespace
+    attack_texts = [r.x_attack_str.replace("\u2581", " ") for r in finished_results]
+    attack_texts = [re.sub(r'\s+', ' ', text).strip() for text in attack_texts]
+    # Remove all special tokens from attack texts
+    for tok in lightning_model.tokenizer.all_special_tokens + ["<|endoftext|>"]:
+        attack_texts = [text.replace(tok, '') for text in attack_texts]
+    
+    # Get original texts
     original_texts = [lightning_model.tokenizer.decode(r.original_prefix_ids, skip_special_tokens=True) for r in finished_results]
 
     if ext_model is None or ext_tokenizer is None:
