@@ -1,6 +1,7 @@
 import collections.abc
 import logging
 import pathlib
+import re
 import shutil
 import tempfile
 import urllib.parse
@@ -12,7 +13,7 @@ from datasets import load_dataset, load_from_disk
 from torch import Tensor
 from torch.utils.data import Dataset, Subset
 from tqdm import tqdm
-from transformers import PreTrainedTokenizerFast
+from transformers import PreTrainedTokenizerBase
 
 from config import DatasetConfig
 
@@ -391,3 +392,23 @@ def download_files(files_to_download: list[str], destination_dir: pathlib.Path, 
         shutil.move(temp_file.name, str(destination_file.absolute()))
 
         logger.info(f'{file_url_string} successfully downloaded.')
+
+
+def clean_text(text: str, tokenizer: PreTrainedTokenizerBase) -> str:
+    """
+    Clean the input text by removing special tokens and normalizing whitespace.
+
+    Args:
+        text (str): The input text to clean.
+
+    Returns:
+        str: The cleaned text.
+    """
+    # Remove all special tokens from attack texts
+    for tok in tokenizer.all_special_tokens + ["<|endoftext|>"]:
+        text = text.replace(tok, '')
+    # Remove all the whitespaces since we have metaspace
+    text = re.sub(r'\s+', '', text)
+    # Replace metaspace with regular space
+    text = text.replace("\u2581", " ").strip()
+    return text

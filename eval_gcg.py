@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
-import re
 from typing import Any
 import torch
 import wandb
 from torch.nn.utils.rnn import pad_sequence
 from torch.nn import functional as F
+from data.data_processor import clean_text
 from instantiate import load_model_from_checkpoint
 from models.loader import load_model_and_tokenizer
 from infer_backward_tinystories import (
@@ -78,14 +78,11 @@ def compute_naturalness_metrics(
     Returns a dict with keys: mean_attack_prefix_ppl, mean_orig_prefix_ppl, mean_attack_dup, mean_semantic_sim
     """
     # Reformat strings: replace \u2581 with space, normalize whitespace
-    attack_texts = [r.x_attack_str.replace("\u2581", " ") for r in finished_results]
-    attack_texts = [re.sub(r'\s+', ' ', text).strip() for text in attack_texts]
-    # Remove all special tokens from attack texts
-    for tok in lightning_model.tokenizer.all_special_tokens + ["<|endoftext|>"]:
-        attack_texts = [text.replace(tok, '') for text in attack_texts]
+    attack_texts = [clean_text(r.x_attack_str, lightning_model.tokenizer) for r in finished_results]
     
     # Get original texts
     original_texts = [lightning_model.tokenizer.decode(r.original_prefix_ids, skip_special_tokens=True) for r in finished_results]
+    original_texts = [clean_text(t, lightning_model.tokenizer) for t in original_texts]
 
     if ext_model is None or ext_tokenizer is None:
         raise Exception("External LLM or tokenizer is not available")

@@ -2,6 +2,7 @@ import json
 import pathlib
 import re
 import torch
+from data.data_processor import clean_text
 from instantiate import load_model_from_checkpoint
 from config import CustomLLMPagConfig, apply_config
 from gcg.gcg_evaluation import GCGResult
@@ -48,10 +49,8 @@ def reformat_successful_attack_strings(json_file_path: pathlib.Path, output_file
 
     # If top_k is specified and we have external model, compute perplexities and sort
     if top_k is not None and ext_model is not None and ext_tokenizer is not None:
-        attack_texts = [r.x_attack_str.replace("\u2581", " ") for r in successful_results]
-        # Normalize whitespace
-        attack_texts = [re.sub(r'\s+', ' ', text).strip() for text in attack_texts]
-        
+        attack_texts = [clean_text(r.x_attack_str, ext_tokenizer) for r in successful_results]
+
         # Tokenize with external tokenizer
         enc_attack = ext_tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
         attack_ids = enc_attack['input_ids']
@@ -81,17 +80,10 @@ def reformat_successful_attack_strings(json_file_path: pathlib.Path, output_file
         original_text = lightning_model.tokenizer.decode(r.original_prefix_ids, skip_special_tokens=True)
         target_text = lightning_model.tokenizer.decode(r.target_response_ids, skip_special_tokens=True)
         
-        # Format attack string
-        attack_text = r.x_attack_str.replace("\u2581", " ")
-        attack_text = re.sub(r'\s+', ' ', attack_text).strip()
-
-        # Format original text
-        original_text = original_text.replace("\u2581", " ")
-        original_text = re.sub(r'\s+', ' ', original_text).strip()
-
-        # Format target text
-        target_text = target_text.replace("\u2581", " ")
-        target_text = re.sub(r'\s+', ' ', target_text).strip()
+        # Format texts
+        attack_text = clean_text(r.x_attack_str, lightning_model.tokenizer)
+        original_text = clean_text(original_text, lightning_model.tokenizer)
+        target_text = clean_text(target_text, lightning_model.tokenizer)
 
         formatted_results.append({
             "steps": r.steps,

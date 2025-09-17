@@ -11,6 +11,7 @@ from torch.nn import CrossEntropyLoss
 from transformers import PreTrainedTokenizerBase
 
 from config import CustomLLMPagConfig, apply_config
+from data.data_processor import clean_text
 from evaluation_metrics import BackwardInferenceEvaluator, aggregate_metrics
 from inverse_lm_stats import init_evaluation
 from models.base_model import BaseLMModel
@@ -770,7 +771,7 @@ def pretty_decode_tokens(tokenizer: PreTrainedTokenizerBase, input_ids: torch.Te
     Decode the input IDs to a human-readable string, skipping special tokens.
     """
     decoded_text = tokenizer.decode(input_ids, skip_special_tokens=True)
-    return decoded_text.replace(' ', '').replace('▁', ' ')
+    return clean_text(decoded_text, tokenizer)
 
 
 @apply_config('inv-first-tiny-train-small')
