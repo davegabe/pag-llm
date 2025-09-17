@@ -71,7 +71,7 @@ class TextDataset(Dataset):
     def __init__(
         self,
         dataset: Dataset,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerBase,
         max_length: int = 512,
         text_column: str = 'text'
     ):
@@ -80,7 +80,7 @@ class TextDataset(Dataset):
 
         Args:
             dataset (Dataset): The dataset to process.
-            tokenizer (PreTrainedTokenizerFast): The tokenizer to use for encoding text.
+            tokenizer (PreTrainedTokenizerBase): The tokenizer to use for encoding text.
             max_length (int): The maximum length of the input text.
             text_column (str): The column name of the text data.
         """
@@ -146,7 +146,7 @@ class PreTokenizedDataset(Dataset):
     def __init__(
         self,
         dataset: Dataset,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerBase,
         max_length: int = 512,
         token_column: str = 'input_ids',
         attention_mask_column: str = 'attention_mask'
@@ -156,7 +156,7 @@ class PreTokenizedDataset(Dataset):
 
         Args:
             dataset (Dataset): The pre-tokenized dataset to process.
-            tokenizer (PreTrainedTokenizerFast): The tokenizer for compatibility (mainly for pad_token_id).
+            tokenizer (PreTrainedTokenizerBase): The tokenizer for compatibility (mainly for pad_token_id).
             max_length (int): The maximum length of the input sequences.
             token_column (str): The column name of the tokenized data.
             attention_mask_column (str): The column name of the attention mask data.
@@ -246,7 +246,7 @@ class PreTokenizedDataset(Dataset):
 
 def load_and_process_dataset(
         dataset_config: DatasetConfig,
-        tokenizer: PreTrainedTokenizerFast,
+        tokenizer: PreTrainedTokenizerBase,
         max_length: int,
         text_column: str = 'text'
 ) -> tuple[TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset, TextDataset | PreTokenizedDataset]:
@@ -255,7 +255,7 @@ def load_and_process_dataset(
 
     Args:
         dataset_config (DatasetConfig): The dataset configuration
-        tokenizer (PreTrainedTokenizerFast): The tokenizer to use for encoding text.
+        tokenizer (PreTrainedTokenizerBase): The tokenizer to use for encoding text.
         max_length (int): The maximum length of the input text.
         text_column (str): The column name of the text data.
 
