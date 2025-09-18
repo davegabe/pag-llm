@@ -1,13 +1,15 @@
 import json
 import pathlib
-import re
+
 import torch
-from data.data_processor import clean_text
-from instantiate import load_model_from_checkpoint
+
 from config import CustomLLMPagConfig, apply_config
-from gcg.gcg_evaluation import GCGResult
+from data.data_processor import clean_text
 from eval_gcg import _compute_loss_metrics, get_batch_perplexity_from_model
+from gcg.gcg_evaluation import GCGResult
+from instantiate import load_model_from_checkpoint
 from models.loader import load_model_and_tokenizer
+
 
 def reformat_successful_attack_strings(json_file_path: pathlib.Path, output_file_path: pathlib.Path, lightning_model, ext_model=None, ext_tokenizer=None, top_k=None):
     """
@@ -52,7 +54,8 @@ def reformat_successful_attack_strings(json_file_path: pathlib.Path, output_file
         attack_texts = [clean_text(r.x_attack_str, ext_tokenizer) for r in successful_results]
 
         # Tokenize with external tokenizer
-        enc_attack = ext_tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
+        enc_attack = ext_tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True, max_length=512,
+                                   padding_side='right')
         attack_ids = enc_attack['input_ids']
         attack_mask = enc_attack['attention_mask']
         
