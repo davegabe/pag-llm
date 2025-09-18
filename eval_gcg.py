@@ -1,21 +1,23 @@
 import json
 from pathlib import Path
 from typing import Any
+
 import torch
-import wandb
-from torch.nn.utils.rnn import pad_sequence
 from torch.nn import functional as F
+from torch.nn.utils.rnn import pad_sequence
+
+import wandb
+from config import CustomLLMPagConfig, apply_config
 from data.data_processor import clean_text
-from instantiate import load_model_from_checkpoint
-from models.loader import load_model_and_tokenizer
+from gcg.gcg_evaluation import GCGResult
 from infer_backward_tinystories import (
     compute_semantic_similarity,
     count_repeated_tokens,
     load_semantic_model,
 )
-from gcg.gcg_evaluation import GCGResult
-from config import CustomLLMPagConfig, apply_config
+from instantiate import load_model_from_checkpoint
 from models.base_model import BaseLMModel
+from models.loader import load_model_and_tokenizer
 
 # CONFIG
 GCG_RESULTS = "checkpoints/tinystories-pretokenized-small/gcg_identity.json"
@@ -34,6 +36,11 @@ def get_batch_perplexity_from_model(model: Any, x_input_ids: torch.Tensor, x_att
     if x_input_ids.ndim == 1:
         x_input_ids = x_input_ids.unsqueeze(0)
         x_attention_mask = x_attention_mask.unsqueeze(0)
+
+    # Assert that we are padding on the right.
+    # Padding on the left breaks the PPL computation.
+    assert (x_attention_mask[:, 0] == 1).all(), \
+        'Right-side padding is required when computing batch perplexity'
 
     # Infer model device from first parameter
     model_device = next(model.parameters()).device
@@ -88,8 +95,10 @@ def compute_naturalness_metrics(
         raise Exception("External LLM or tokenizer is not available")
 
     # Tokenize with external tokenizer and move tensors to the evaluated model device
-    enc_attack = ext_tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
-    enc_orig = ext_tokenizer(original_texts, return_tensors='pt', padding=True, truncation=True, max_length=512)
+    enc_attack = ext_tokenizer(attack_texts, return_tensors='pt', padding=True, truncation=True, max_length=512,
+                               padding_side='right')
+    enc_orig = ext_tokenizer(original_texts, return_tensors='pt', padding=True, truncation=True, max_length=512,
+                             padding_side='right')
     attack_ids = enc_attack['input_ids']
     attack_mask = enc_attack['attention_mask']
     orig_ids = enc_orig['input_ids']
