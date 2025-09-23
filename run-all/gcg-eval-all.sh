@@ -1,3 +1,6 @@
+# Set WANDB_ENTITY variable if using Weights & Biases
+export WANDB_ENTITY="pag-llm-team"
+
 # Base
 python eval_gcg.py --config-name base-small-offline training.method=base +model.checkpoint_path=best-checkpoints/best-base.ckpt
 
