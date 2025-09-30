@@ -5,8 +5,9 @@ lightning_logs/
 downloaded_dataset/
 .env
 .venv/
-wandb/
-*.SLURMout
+**/wandb/
+**/inverse_lm*.SLURMerr
+**/inverse_lm*.SLURMout
 /faster-gcg/
 offline_assets/
 best-checkpoints/

@@ -21,10 +21,10 @@ from models.common import forward_grad_embeddings
 def load_semantic_model(cfg: CustomLLMPagConfig) -> SentenceTransformer:
     """
     Load SentenceTransformer model from local path if available, otherwise from HuggingFace.
-    
+
     Args:
         cfg: Configuration object containing local model path if available
-        
+
     Returns:
         SentenceTransformer: Loaded model
     """
@@ -39,12 +39,12 @@ def load_semantic_model(cfg: CustomLLMPagConfig) -> SentenceTransformer:
 def compute_semantic_similarity(text1: str, text2: str, model: SentenceTransformer) -> float:
     """
     Compute semantic similarity between two texts using SentenceTransformers.
-    
+
     Args:
         text1: First text string
         text2: Second text string
         model: SentenceTransformer model
-        
+
     Returns:
         float: Cosine similarity score between 0 and 1
     """
@@ -411,11 +411,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             }
         },
     )
-    
+
     # Initialize semantic similarity model
     print("Loading SentenceTransformer model for semantic similarity...")
     semantic_model = load_semantic_model(cfg)
-    
+
     lightning_module, _, data_module, reverse_bigram, bigram_counts = init_evaluation(
         cfg=cfg,
         device=device,
@@ -452,11 +452,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     total_bigram_ppl = 0.0 if use_init == 'bigram' and baseline_model is not None else None
     total_semantic_similarity = 0.0
     total_bigram_semantic_similarity = 0.0 if use_init == 'bigram' and baseline_model is not None else None
-    
+
     # Global sample counter across all batches
     global_sample_idx = 0
     total_samples_processed = 0
-    
+
     # Iterate over entire test dataset
     total_samples = len(data_module.test_dataloader().dataset)
     for batch_idx, batch in enumerate(data_module.test_dataloader()):
@@ -464,7 +464,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         input_ids, attention_mask, labels, shift_labels = batch
         t = input_ids.size(-1)
         batch_size = input_ids.size(0)
-        
+
         # Apply k_samples limit across entire dataset, not per batch
         remaining_samples = None
         if k_samples is not None:
@@ -475,12 +475,12 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 input_ids = input_ids[:remaining_samples]
                 attention_mask = attention_mask[:remaining_samples]
                 batch_size = remaining_samples
-        
+
         # Remove prefix tokens
         input_ids = input_ids[:, skip_prefix_tokens:]
         attention_mask = attention_mask[:, skip_prefix_tokens:]
         t -= skip_prefix_tokens
-        
+
         assert input_ids.shape == (batch_size, t), \
             f'input_ids shape mismatch: {input_ids.shape} != ({batch_size}, {t})'
         assert attention_mask.shape == (batch_size, t), \
@@ -519,17 +519,17 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
 
             # Calculate metrics for this sample
             sample_metric = {}
-            
+
             # Get original prefix and suffix for comprehensive evaluation
             original_prefix_ids = sample_input_ids[:prefix_tokens_len]
             original_prefix_mask = sample_attention_mask[:prefix_tokens_len]
             true_suffix_ids = sample_input_ids[prefix_tokens_len:]
             true_suffix_mask = sample_attention_mask[prefix_tokens_len:]
-            
+
             # Get original prefix text for semantic similarity comparison
             original_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, sample_input_ids)
             predicted_prefix_text = pretty_decode_tokens(lightning_module.tokenizer, suffix_input_ids)
-            
+
             # Finally, print the predicted sentence
             predicted_stats = print_text_stats(
                 lightning_module=lightning_module,
@@ -539,11 +539,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 tag='Predicted',
                 ansi_color='36',
             )
-            
+
             # Get generated prefix for comprehensive evaluation
             generated_prefix_ids = suffix_input_ids[:prefix_tokens_len]
             generated_prefix_mask = suffix_attention_mask[:prefix_tokens_len]
-            
+
             # Compute comprehensive evaluation metrics
             comprehensive_metrics = evaluator.compute_comprehensive_metrics(
                 reference_prefix=original_prefix_ids,
@@ -556,12 +556,12 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 original_overall_text=original_prefix_text,
             )
             comprehensive_sample_metrics.append(comprehensive_metrics)
-            
+
             # Compute semantic similarity between predicted and original prefix
             predicted_prefix_text = predicted_stats['prefix_text']
             semantic_sim = compute_semantic_similarity(predicted_prefix_text, original_prefix_text, semantic_model)
             predicted_stats['semantic_similarity'] = semantic_sim
-            
+
             sample_metric['predicted'] = predicted_stats
             total_predicted_ppl += predicted_stats['overall_ppl']
             total_semantic_similarity += semantic_sim
@@ -584,12 +584,12 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                     tag='Bigram',
                     ansi_color='34',
                 )
-                
+
                 # Compute semantic similarity for bigram-generated prefix
                 bigram_prefix_text = bigram_stats['prefix_text']
                 bigram_semantic_sim = compute_semantic_similarity(bigram_prefix_text, original_prefix_text, semantic_model)
                 bigram_stats['semantic_similarity'] = bigram_semantic_sim
-                
+
                 sample_metric['bigram'] = bigram_stats
                 total_bigram_ppl += bigram_stats['overall_ppl']
                 total_bigram_semantic_similarity += bigram_semantic_sim
@@ -628,11 +628,11 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                     f'sample_{sample_idx}/original_overall_ppl': original_stats['overall_ppl'],
                     f'sample_{sample_idx}/original_token_duplications': original_stats['token_duplications'],
                 }
-            
+
                 # Add comprehensive evaluation metrics
                 for metric_name, metric_value in comprehensive_metrics.items():
                     sample_wandb_metrics[f'sample_{sample_idx}/{metric_name}'] = metric_value
-            
+
                 wandb_logger.experiment.log(sample_wandb_metrics)
 
                 # Add also log of the generated text
@@ -640,7 +640,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                     f'sample_{sample_idx}/predicted_text': predicted_stats['prefix_text'],
                     f'sample_{sample_idx}/original_text': original_stats['prefix_text'],
                 })
-            
+
                 if use_init == 'bigram' and baseline_model is not None:
                     wandb_logger.experiment.log({
                         f'sample_{sample_idx}/bigram_prefix_ppl': bigram_stats['prefix_ppl'],
@@ -658,7 +658,7 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
                 wandb_logger.experiment.log({
                     f'sample_{sample_idx}/suffix_text': suffix_text,
                 })
-        
+
         # Update counters at the end of each batch
         global_sample_idx += batch_size
         total_samples_processed += batch_size
@@ -670,10 +670,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     avg_predicted_ppl = total_predicted_ppl / actual_samples
     avg_original_ppl = total_original_ppl / actual_samples
     avg_semantic_similarity = total_semantic_similarity / actual_samples
-    
+
     # Aggregate comprehensive metrics
     aggregated_comprehensive_metrics = aggregate_metrics(comprehensive_sample_metrics)
-    
+
     aggregate_final_metrics = {
         'avg_predicted_overall_ppl': avg_predicted_ppl,
         'avg_original_overall_ppl': avg_original_ppl,
@@ -682,10 +682,10 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
         'ppl_improvement_ratio': avg_predicted_ppl / avg_original_ppl if avg_original_ppl > 0 else float('inf'),
         'actual_samples_used': actual_samples,
     }
-    
+
     # Add aggregated comprehensive metrics
     aggregate_final_metrics.update(aggregated_comprehensive_metrics)
-    
+
     if total_bigram_ppl is not None:
         avg_bigram_ppl = total_bigram_ppl / actual_samples
         avg_bigram_semantic_similarity = total_bigram_semantic_similarity / actual_samples
@@ -695,9 +695,9 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
             'bigram_vs_predicted_ppl_ratio': avg_predicted_ppl / avg_bigram_ppl if avg_bigram_ppl > 0 else float('inf'),
             'semantic_similarity_improvement': avg_semantic_similarity - avg_bigram_semantic_similarity,
         })
-    
+
     wandb_logger.experiment.log(aggregate_final_metrics)
-    
+
     # Log summary
     print(f"\n=== EVALUATION SUMMARY ===")
     print(f"Samples Used: {actual_samples}")
@@ -706,18 +706,18 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     print(f"Average Semantic Similarity: {avg_semantic_similarity:.4f}")
     print(f"PPL Improvement: {aggregate_final_metrics['ppl_improvement']:.2f}")
     print(f"PPL Improvement Ratio: {aggregate_final_metrics['ppl_improvement_ratio']:.3f}")
-    
+
     # Print comprehensive metrics summary
     print(f"\n--- Token Overlap Metrics ---")
     print(f"Mean Token Precision: {aggregated_comprehensive_metrics.get('mean_token_precision', 0.0):.4f}")
     print(f"Mean Token Recall: {aggregated_comprehensive_metrics.get('mean_token_recall', 0.0):.4f}")
     print(f"Mean Token F1: {aggregated_comprehensive_metrics.get('mean_token_f1', 0.0):.4f}")
     print(f"Mean Token Jaccard: {aggregated_comprehensive_metrics.get('mean_token_jaccard', 0.0):.4f}")
-    
+
     print(f"\n--- Position Accuracy Metrics ---")
     print(f"Mean Exact Match Accuracy: {aggregated_comprehensive_metrics.get('mean_exact_match_accuracy', 0.0):.4f}")
     print(f"Mean Positional Accuracy: {aggregated_comprehensive_metrics.get('mean_positional_accuracy', 0.0):.4f}")
-    
+
     print(f"\n--- Forward Coherence Metrics ---")
     print(f"Mean Forward Coherence PPL: {aggregated_comprehensive_metrics.get('mean_forward_coherence_ppl', float('inf')):.2f}")
     print(f"Mean Forward Coherence Loss: {aggregated_comprehensive_metrics.get('mean_forward_coherence_loss', float('inf')):.4f}")
@@ -726,16 +726,16 @@ def run_evaluation(device: str, prefix_len: int, use_init: str, ckpt_file: str, 
     print(
         f"Mean 3rd-Party Predicted txt PPL: {aggregated_comprehensive_metrics.get('predicted_perplexity', float('inf')):.2f}")
 
-    
+
     if total_bigram_ppl is not None:
         print(f"\n--- Bigram Baseline Comparison ---")
         print(f"Average Bigram PPL: {avg_bigram_ppl:.2f}")
         print(f"Average Bigram Semantic Similarity: {avg_bigram_semantic_similarity:.4f}")
         print(f"Bigram vs Predicted PPL Ratio: {aggregate_final_metrics['bigram_vs_predicted_ppl_ratio']:.3f}")
         print(f"Semantic Similarity Improvement: {aggregate_final_metrics['semantic_similarity_improvement']:.4f}")
-    
+
     print(f"==========================\n")
-    
+
     # Finish WandB run
     wandb_logger.experiment.finish()
 
@@ -755,8 +755,8 @@ def print_text_stats(lightning_module: BaseLMModel, input_ids: torch.Tensor, att
 
     print(
         f"{tag:<10} [PPL - prefix: {prefix_ppl:>6.1f} / overall: {text_ppl:>6.1f}]: "  # / penalty: {token_duplications}]: "
-          f"{ansi_colored_text}")
-    
+        f"{ansi_colored_text}")
+
     # Return metrics for logging
     return {
         'prefix_ppl': prefix_ppl,
@@ -794,7 +794,7 @@ def main(cfg: CustomLLMPagConfig):
     if isinstance(ckpt_path, str):
         ckpt_path = Path(ckpt_path)
     baseline_ckpt_path = ckpt_path.parent / 'best-base.ckpt'
-    
+
     run_evaluation(device='cuda:0',
                    k_samples=None,  # How many samples to take from the dataset (set to None for all samples)
                    skip_prefix_tokens=5,  # How many tokens to skip entirely
