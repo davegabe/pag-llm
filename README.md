@@ -11,7 +11,7 @@
     <br>
     Sapienza University of Rome
     <br>
-    <a href="">  <!-- # TODO -->
+    <a href="https://arxiv.org/abs/2510.01929">
         <img src="https://img.shields.io/badge/arXiv-Technical%20Report-blue?logo=arxiv" alt="Technical Report" style="margin: 10px;">
     </a>
 </p>
@@ -43,5 +43,15 @@ Adaptation is required to be run locally, but the scripts already contain the co
 For more information and specific cases, feel free to send an email to the repository authors.
 
 ## Reference
-TBD <!-- # TODO -->
+```bibtex
+@misc{gabrielli2025inverselanguagemodelingrobust,
+      title={Inverse Language Modeling towards Robust and Grounded LLMs}, 
+      author={Davide Gabrielli and Simone Sestito and Iacopo Masi},
+      year={2025},
+      eprint={2510.01929},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL},
+      url={https://arxiv.org/abs/2510.01929}, 
+}
+```
 
